@@ -1,189 +1,90 @@
 import json
 import xml.etree.ElementTree as ET
-import huggingface_hub
-import rank_bm25
 import numpy as np
 import torch
-import tiktoken
+import os
 
-
+from dotenv import load_dotenv
 from openai import OpenAI
 from rank_bm25 import BM25Okapi
-from scipy.spatial.distance import cosine
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics import accuracy_score, f1_score
 from transformers import pipeline, AutoModel, AutoTokenizer
 from collections import defaultdict
 
+load_dotenv()
 
 
-key_openai = ''
+# Fill these variables yourself
+key_openai = os.getenv("OPENAI_API_KEY")  # OpenAI API key
 key_deepinfra = ''
-
-# Load the training file and ontology
-domain_ontology_path = ""
 train_file_path = ""
 test_file_path = ""
 
+use_SimCSE = True  # if true, use SimCSE, otherwise use BM25 for demonstration selection
+model_choice = "gpt-4o" # options: "llama3"
+num_shots = 3  # number of demonstrations to use
 
+# Load data
+train_root = ET.parse(train_file_path).getroot()
+test_root = ET.parse(test_file_path).getroot()
 
-# Load training dataset for demonstration selection
-train_tree = ET.parse(train_file_path)
-train_root = train_tree.getroot()
 train_sentences = train_root.findall(".//sentence")
+test_sentences = test_root.findall(".//sentence")
 train_corpus = [sentence.find("text").text for sentence in train_sentences]
 
-# Load test dataset for result generation
-test_tree = ET.parse(test_file_path)
-test_root = test_tree.getroot()
-test_sentences = test_root.findall(".//sentence")
+openai_client_openai = OpenAI(api_key= key_openai)
+openai_client_deepinfra = OpenAI(api_key= key_deepinfra, base_url = "https://api.deepinfra.com/v1/openai")
 
-openai_client_openai = OpenAI(
-    api_key= key_openai
-)
+def get_response(prompt, client, model):
+    if model == "gpt-3.5":
+        model = "gpt-3.5-turbo"
+    elif model == "gpt-4o":
+        model = "gpt-4o-mini"
+    elif model == "llama3":
+        model = "meta-llama/Meta-Llama-3-70B-Instruct"
+    elif model == "llama4":
+        model = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+    else:
+        raise ValueError("Unsupported model type. Please choose from 'gpt-3.5', 'gpt-4o', 'llama3', or 'llama4'.")
 
-openai_client_deepinfra = OpenAI(
-    api_key= key_deepinfra,
-    base_url = "https://api.deepinfra.com/v1/openai"
-)
-
-def get_response_gpt35turbo(openai_client, prompt, temperature=0):
-    messages = [{"role":"user", "content":prompt}]
-    output = openai_client.chat.completions.create(
-        model="gpt-3.5-turbo",
+    messages = [{"role": "user", "content": prompt}]
+    output = client.chat.completions.create(
+        model=model,
         messages=messages,
-        temperature = temperature
+        temperature=0
     )
     return output.choices[0].message.content
 
-def get_response_gpt4omini(openai_client, prompt, temperature=0):
-    messages = [{"role":"user", "content":prompt}]
-    output = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        temperature = temperature
-    )
-    return output.choices[0].message.content
-
-def get_response_Llama370Binstruct(openai_client, prompt, temperature=0):
-    messages = [{"role":"user", "content":prompt}]
-    output = openai_client.chat.completions.create(
-        model="meta-llama/Meta-Llama-3-70B-Instruct",
-        messages=messages,
-        temperature = temperature
-    )
-    return output.choices[0].message.content
-
-def get_response_Llama417Binstruct(openai_client, prompt, temperature=0):
-    messages = [{"role":"user", "content":prompt}]
-    output = openai_client.chat.completions.create(
-        model="meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        messages=messages,
-        temperature = temperature
-    )
-    return output.choices[0].message.content
 
 # BM25
-def BM25_demonstration_selection(query_sentence, train_corpus, top_k):
-
-    # Preparing BM25 - keyword-based demonstration selection
-    tokenized_train_corpus = [sentence.split(" ") for sentence in train_corpus]
-    bm25 = BM25Okapi(tokenized_train_corpus)
-
-    # Tokenize the query sentence
-    tokenized_query = query_sentence.lower().split()
-
-    # BM25 demonstration selection
-    scores = bm25.get_scores(tokenized_query)
-    top_indices = scores.argsort()[-top_k:][::-1]  # few shots demonstration
-
-    return top_indices
+def BM25_demonstration_selection(query_sentence, corpus, k):
+    bm25 = BM25Okapi([s.lower().split() for s in corpus])
+    scores = bm25.get_scores( query_sentence.lower().split())
+    return np.argsort(scores)[::-1][:k]
 
 # SimCSE
-def precompute_train_embeddings(train_corpus, tokenizer, model):
-    model.eval()  # Set to evaluation mode for faster inference
 
-    train_inputs = tokenizer(train_corpus, padding=True, truncation=True, return_tensors="pt").to(device) #Tokenize training texts
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+tokenizer = AutoTokenizer.from_pretrained("princeton-nlp/sup-simcse-bert-base-uncased")
+SimCSE_model = AutoModel.from_pretrained("princeton-nlp/sup-simcse-bert-base-uncased").to(device)
+SimCSE_model.eval()
 
-    with torch.no_grad(): # Get the embeddings
-        train_embeddings = SimCSE_model(**train_inputs, output_hidden_states=True, return_dict=True).pooler_output
-
-    # Concatenate all batches into a single tensor
-    return train_embeddings
-
-def SimCSE_demonstration_selection(query_sentence, train_corpus, train_embeddings, tokenizer, model, top_k):
-    # Tokenize and embed the query sentence
-    query_input = tokenizer(query_sentence, padding=True, truncation=True, return_tensors="pt").to(device)
+def precompute_train_embeddings(corpus, tokenizer):
+    inputs = tokenizer(corpus, padding=True, truncation=True, return_tensors="pt").to(device)
     with torch.no_grad():
-        query_embedding = model(**query_input, output_hidden_states=True, return_dict=True).pooler_output
+        return SimCSE_model(**inputs, output_hidden_states=True, return_dict=True).pooler_output.cpu()
 
-    # Calculate cosine similarities
-    similarities = cosine_similarity(query_embedding.cpu().detach().numpy(), train_embeddings.numpy())
-
-    # Get indices of top k similar sentences
-    top_indices = np.argsort(similarities[0])[::-1][:top_k]
-
-    return top_indices
+train_embeddings = precompute_train_embeddings(train_corpus, tokenizer, SimCSE_model)
 
 
+def SimCSE_demonstration_selection(query_sentence, embeddings, k):
+    inputs = tokenizer(query_sentence, padding=True, truncation=True, return_tensors="pt").to(device)
+    with torch.no_grad():
+        query_embedding = SimCSE_model(**inputs, output_hidden_states=True, return_dict=True).pooler_output.cpu()
+    similarities = cosine_similarity(query_embedding, embeddings)[0]
+    return np.argsort(similarities)[-k:][::-1]
 
-# Evaluation metrics
-def evaluation(test_sentences, results):
-
-    ground_truth = []
-    for sentence in test_sentences:
-        sentence_id = sentence.get("id")
-        opinions = sentence.findall(".//Opinion")
-        sentence_truth = {opinion.get("target"): opinion.get("polarity").capitalize() for opinion in opinions}
-        ground_truth.append(sentence_truth)
-
-    filtered_ground_truth = []
-    filtered_results = []
-
-    # Filter out invalid JSON, aspect mismatches
-    for truth, predicted in zip(ground_truth, results):
-
-        # Skip if JSON is invalid
-        try:
-            predicted = json.loads(predicted)
-        except json.JSONDecodeError as e:
-            continue
-
-        # Extract aspects
-        truth_aspects = list(truth.keys())
-        predicted_aspects = list(predicted.keys())
-
-        # Keep observation only if aspects are exactly equal
-        if truth_aspects == predicted_aspects:
-            filtered_ground_truth.append(truth)
-            filtered_results.append(predicted)
-
-    polarities_true = []
-    polarities_predicted = []
-
-    for truth, predicted in zip(filtered_ground_truth, filtered_results):
-
-        for aspect, true_polarity in truth.items():
-            predicted_polarity = predicted.get(aspect).capitalize()
-            polarities_true.append(true_polarity.capitalize())
-            polarities_predicted.append(predicted_polarity)
-
-    labels = ["Positive", "Negative", "Neutral"]
-
-    # Accuracy
-    accuracy = accuracy_score(polarities_true, polarities_predicted)
-
-    # F1 score
-    f1 = f1_score(polarities_true, polarities_predicted, labels=labels, average="weighted", zero_division=0)
-
-    # Macro F1 score
-    macro_f1 = f1_score(polarities_true, polarities_predicted, labels=labels, average="macro", zero_division=0)
-
-    return {
-        "accuracy": accuracy * 100,
-        "f1": f1*100,
-        "macro_f1": macro_f1 * 100
-    }
 
 # Base prompt
 base_prompt = """
@@ -207,61 +108,83 @@ Always respond with a valid JSON. Do not invlude any extra characters, symbols, 
 
 """
 
+
+# Evaluation metrics
+def evaluation(test_sentences, results):
+
+    ground_truth, filtered_ground_truth, filtered_preds = [], [], []
+    for sentence in test_sentences:
+        opinions = sentence.findall(".//Opinion")
+        sentence_truth = {opinion.get("target"): opinion.get("polarity").capitalize() for opinion in opinions}
+        ground_truth.append(sentence_truth)
+
+
+    # Filter out invalid JSON, aspect mismatches
+    for truth, predicted in zip(ground_truth, results):
+
+        # Skip if JSON is invalid
+        try:
+            predicted = json.loads(predicted)
+        except json.JSONDecodeError:
+            continue
+
+        if list(truth.keys()) == list(pred_dict.keys()):
+            filtered_ground_truth.append(truth)
+            filtered_preds.append(pred_dict)
+
+    y_true, y_pred = [], []
+    for truth, predicted in zip(filtered_ground_truth, filtered_preds):
+
+        for aspect, true_polarity in truth.items():
+            predicted_polarity = predicted.get(aspect).capitalize()
+            y_true.append(true_polarity.capitalize())
+            y_pred.append(predicted_polarity)
+
+    labels = ["Positive", "Negative", "Neutral"]
+
+    return {
+        "accuracy": accuracy_score(y_true, y_pred) * 100,
+        "f1": f1_score(y_true, y_pred, average="weighted", labels=labels, zero_division=0) * 100,
+        "macro_f1": f1_score(y_true, y_pred, average="macro", labels=labels, zero_division=0) * 100,
+    }
+
+results = []
+
 # Main
 for sentence in test_sentences:
-    sentence_id = sentence.get("id")
     sentence_text = sentence.find("text").text
-
-    # Get the list of aspects and corresponding categories for the sentence
     opinions = sentence.findall(".//Opinion")
     aspects = [opinion.get("target") for opinion in opinions] # Currently I don't do anything with this
-    aspects_category = [opinion.get("category") for opinion in opinions]
+   
 
-    # Demonstration selection (SELECT CORRECT ONE)
-    shots = 3
-    top_indices = SimCSE_demonstration_selection(sentence_text, train_corpus, train_embeddings, tokenizer, SimCSE_model, shots)
-    top_indices = BM25_demonstration_selection(sentence_text, train_corpus, shots)
+    if use_SimCSE:
+        top_indices = SimCSE_demonstration_selection(sentence_text, train_corpus, train_embeddings, num_shots)
+    else:
+        top_indices = BM25_demonstration_selection(sentence_text, train_corpus, num_shots)
 
-    # Ontology injection (SELECT CORRECT ONE)
-    ontology_injection = full_ontology_injection(ontology)
-    ontology_injection = aspect_based_ontology_injection(ontology, aspects_category)
-
-    # Format demonstrations
     demonstrations = []
-    for i in top_indices:
-        demo = train_sentences[i]
-        demo_id = demo.get("id")
+    for idx in top_indices:
+        demo = train_sentences[idx]
         demo_text = demo.find("text").text
         demo_opinions = demo.findall(".//Opinion")
-        demo_aspect_polarity_pairs = [
-            {"aspect": opinion.get("target"), "polarity": opinion.get("polarity")}
-            for opinion in demo_opinions
-        ]
-
-        demo_pairs_str = ", ".join(
-            [f"{pair['aspect']} ({pair['polarity']})" for pair in demo_aspect_polarity_pairs]
-        ) if demo_aspect_polarity_pairs else "None"
-        demonstrations.append(f"Sentence: {demo_text}\nAspects: {demo_pairs_str}")
-
+        pair_str = ", ".join(f"{opinion.get('target')} ({opinion.get('polarity')})" for opinion in demo_opinions)
+        demonstrations.append(f"Sentence: {demo_text}\nAspects: {pair_str}")
     demonstrations = "\n\n".join(demonstrations)
 
     # Preparing prompt
     prompt = base_prompt.format(
-        domain_ontology=ontology_injection,
         demonstrations=demonstrations,
         sentence=sentence_text,
-        aspects=", ".join(aspects) if aspects else "None",
-        sentence_id=sentence_id
+        aspects=", ".join(aspects) if aspects else "None"
     )
     print(prompt)
 
-    # Output generation (SELECT CORRECT ONE)
-    output = get_response_gpt35turbo(openai_client_openai, prompt)
-    output = get_response_gpt4omini(openai_client_openai, prompt)
-    output = get_response_Llama370Binstruct(openai_client_deepinfra, prompt)
-    output = get_response_Llama417Binstruct(openai_client_deepinfra, prompt)
+    try:
+        output = get_response(prompt, openai_client_openai, model_choice)
+        results.append(output)
+    except Exception as e:
+        print(f"Error generating response: {e}")
+        results.append("{}")  # fallback to empty prediction
 
-    results.append(output)
-
-final_results = evaluation(test_sentences, results)
-print(final_results)
+metrics = evaluation(test_sentences, results)
+print(json.dumps(metrics, indent=2))
