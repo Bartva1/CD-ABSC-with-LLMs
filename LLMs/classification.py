@@ -1,8 +1,8 @@
 import json
-import xml.etree.ElementTree as ET
 import numpy as np
 import torch
 import os
+
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -11,30 +11,56 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics import accuracy_score, f1_score
 from transformers import pipeline, AutoModel, AutoTokenizer
 from collections import defaultdict
+from tqdm import tqdm
+from groq import Groq 
 
 load_dotenv()
 
 
 # Fill these variables yourself
-key_openai = os.getenv("OPENAI_API_KEY")  # OpenAI API key
-key_deepinfra = ''
-train_file_path = ""
-test_file_path = ""
+key_openai = os.getenv("OPENAI_API_KEY") 
+key_groq = os.getenv("GROQ_API_KEY")  
 
-use_SimCSE = True  # if true, use SimCSE, otherwise use BM25 for demonstration selection
-model_choice = "gpt-4o" # options: "llama3"
+key_deepinfra = ''
+train_file_path = r"data_out\restaurant\raw_data_restaurant_train_2014.txt"
+test_file_path = r"data_out\laptop\raw_data_laptop_test_2014.txt"
+
+use_SimCSE = False  # if true, use SimCSE, otherwise use BM25 for demonstration selection
+model_choice = "llama3" # options: "llama3"
 num_shots = 3  # number of demonstrations to use
 
-# Load data
-train_root = ET.parse(train_file_path).getroot()
-test_root = ET.parse(test_file_path).getroot()
+def load_txt_data(path):
+    samples = []
+    with open(path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f.readlines() if line.strip()]
+    assert len(lines) % 3 == 0, "Data format error: lines must be multiples of 3"
+    for i in range(0, len(lines), 3):
+        template = lines[i]
+        aspect = lines[i + 1]
+        polarity = "Positive"
+        if lines[i + 2] == "0":
+            polarity = "Neutral"
+        elif lines[i + 2] == "-1":
+            polarity = "Negative"
 
-train_sentences = train_root.findall(".//sentence")
-test_sentences = test_root.findall(".//sentence")
-train_corpus = [sentence.find("text").text for sentence in train_sentences]
+        sentence = template.replace("$T$", aspect)
+        samples.append({
+            "text": sentence,
+            "template": template,
+            "aspect": aspect,
+            "polarity": polarity
+        })
+    return samples
+
+train_data = load_txt_data(train_file_path)
+test_data = load_txt_data(test_file_path)
+train_corpus = [sample["text"] for sample in train_data]
 
 openai_client_openai = OpenAI(api_key= key_openai)
+groq_client = Groq(api_key=key_groq)
 openai_client_deepinfra = OpenAI(api_key= key_deepinfra, base_url = "https://api.deepinfra.com/v1/openai")
+
+client = groq_client
 
 def get_response(prompt, client, model):
     if model == "gpt-3.5":
@@ -42,7 +68,8 @@ def get_response(prompt, client, model):
     elif model == "gpt-4o":
         model = "gpt-4o-mini"
     elif model == "llama3":
-        model = "meta-llama/Meta-Llama-3-70B-Instruct"
+        model = "llama3-70b-8192"
+        # model = "meta-llama/Meta-Llama-3-70B-Instruct"
     elif model == "llama4":
         model = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
     else:
@@ -66,16 +93,18 @@ def BM25_demonstration_selection(query_sentence, corpus, k):
 # SimCSE
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = AutoTokenizer.from_pretrained("princeton-nlp/sup-simcse-bert-base-uncased")
-SimCSE_model = AutoModel.from_pretrained("princeton-nlp/sup-simcse-bert-base-uncased").to(device)
-SimCSE_model.eval()
+if use_SimCSE:
+    tokenizer = AutoTokenizer.from_pretrained("princeton-nlp/sup-simcse-bert-base-uncased")
+    SimCSE_model = AutoModel.from_pretrained("princeton-nlp/sup-simcse-bert-base-uncased").to(device)
+    SimCSE_model.eval()
 
-def precompute_train_embeddings(corpus, tokenizer):
+def precompute_train_embeddings(corpus):
     inputs = tokenizer(corpus, padding=True, truncation=True, return_tensors="pt").to(device)
     with torch.no_grad():
         return SimCSE_model(**inputs, output_hidden_states=True, return_dict=True).pooler_output.cpu()
 
-train_embeddings = precompute_train_embeddings(train_corpus, tokenizer, SimCSE_model)
+if use_SimCSE:
+    train_embeddings = precompute_train_embeddings(train_corpus)
 
 
 def SimCSE_demonstration_selection(query_sentence, embeddings, k):
@@ -112,36 +141,21 @@ Always respond with a valid JSON. Do not invlude any extra characters, symbols, 
 # Evaluation metrics
 def evaluation(test_sentences, results):
 
-    ground_truth, filtered_ground_truth, filtered_preds = [], [], []
-    for sentence in test_sentences:
-        opinions = sentence.findall(".//Opinion")
-        sentence_truth = {opinion.get("target"): opinion.get("polarity").capitalize() for opinion in opinions}
-        ground_truth.append(sentence_truth)
+    y_true, y_pred = [], []
 
-
-    # Filter out invalid JSON, aspect mismatches
-    for truth, predicted in zip(ground_truth, results):
-
-        # Skip if JSON is invalid
+    for sample, prediction in zip(test_data, results):
         try:
-            predicted = json.loads(predicted)
+            pred = json.loads(prediction)
         except json.JSONDecodeError:
             continue
 
-        if list(truth.keys()) == list(pred_dict.keys()):
-            filtered_ground_truth.append(truth)
-            filtered_preds.append(pred_dict)
-
-    y_true, y_pred = [], []
-    for truth, predicted in zip(filtered_ground_truth, filtered_preds):
-
-        for aspect, true_polarity in truth.items():
-            predicted_polarity = predicted.get(aspect).capitalize()
-            y_true.append(true_polarity.capitalize())
+        aspect = sample["aspect"]
+        true_polarity = sample["polarity"]
+        predicted_polarity = pred.get(aspect, "").capitalize()
+        if predicted_polarity:
+            y_true.append(true_polarity)
             y_pred.append(predicted_polarity)
-
     labels = ["Positive", "Negative", "Neutral"]
-
     return {
         "accuracy": accuracy_score(y_true, y_pred) * 100,
         "f1": f1_score(y_true, y_pred, average="weighted", labels=labels, zero_division=0) * 100,
@@ -151,40 +165,38 @@ def evaluation(test_sentences, results):
 results = []
 
 # Main
-for sentence in test_sentences:
-    sentence_text = sentence.find("text").text
-    opinions = sentence.findall(".//Opinion")
-    aspects = [opinion.get("target") for opinion in opinions] # Currently I don't do anything with this
+for sample in tqdm(test_data):
+    sentence_text = sample["text"]
+    template = sample["template"]
+    aspects = sample["aspect"]
    
 
     if use_SimCSE:
-        top_indices = SimCSE_demonstration_selection(sentence_text, train_corpus, train_embeddings, num_shots)
+        top_indices = SimCSE_demonstration_selection(sentence_text, train_embeddings, num_shots)
     else:
         top_indices = BM25_demonstration_selection(sentence_text, train_corpus, num_shots)
 
     demonstrations = []
     for idx in top_indices:
-        demo = train_sentences[idx]
-        demo_text = demo.find("text").text
-        demo_opinions = demo.findall(".//Opinion")
-        pair_str = ", ".join(f"{opinion.get('target')} ({opinion.get('polarity')})" for opinion in demo_opinions)
-        demonstrations.append(f"Sentence: {demo_text}\nAspects: {pair_str}")
+        demo = train_data[idx]
+        demonstrations.append(f"Sentence: {demo['template']}\nAspects: {demo['aspect']} ({demo['polarity']})")
     demonstrations = "\n\n".join(demonstrations)
+
 
     # Preparing prompt
     prompt = base_prompt.format(
         demonstrations=demonstrations,
         sentence=sentence_text,
-        aspects=", ".join(aspects) if aspects else "None"
+        aspects=aspects
     )
-    print(prompt)
+    # print(prompt)
 
     try:
-        output = get_response(prompt, openai_client_openai, model_choice)
+        output = get_response(prompt, client, model_choice)
         results.append(output)
     except Exception as e:
         print(f"Error generating response: {e}")
-        results.append("{}")  # fallback to empty prediction
+        results.append("{}")  
 
-metrics = evaluation(test_sentences, results)
+metrics = evaluation(test_data, results)
 print(json.dumps(metrics, indent=2))
