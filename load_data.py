@@ -1,12 +1,10 @@
 from torch.utils.data import DataLoader
 import torch
-from transformers import BertTokenizer, BertModel
 from torch.utils.data import Dataset, DataLoader
-from config import *
 import random
 import torch.nn.functional as F
 import gc 
-from masking_restraints import is_subsequence_stopwords2
+
 
 def divide_samples(input_file, train_file, test_file, train_ratio=0.8):
     random.seed(123)

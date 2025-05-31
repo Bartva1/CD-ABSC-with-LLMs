@@ -1,2 +1,4 @@
 .env
 results
+cache
+data_out

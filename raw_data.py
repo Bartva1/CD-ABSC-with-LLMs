@@ -10,6 +10,7 @@
 
 from data_book_hotel import read_book_hotel
 from data_rest_lapt import read_rest_lapt
+from load_data import divide_samples, get_stats_from_file
 import os 
 
 import nltk
@@ -20,10 +21,10 @@ def main():
 
     :return:
     """
-    # Domain is one of the following: restaurant (2014), laptop (2014), book (2019), hotel (2015).
+    # Domain is one of the following: restaurant (2014), laptop (2014), book (2019)
 
-    domain = "laptop"
-    year = 2014
+    domain = "book"
+    year = 2019
 
     if domain == "restaurant" or domain == "laptop":
         train_file = "SemEval2014/" + domain + "_train_" + str(year) + ".xml"
@@ -42,6 +43,9 @@ def main():
                        out_file=train_out)
         read_rest_lapt(in_file=test_file, source_count=[], source_word2idx={}, target_count=[], target_phrase2idx={},
                        out_file=test_out)
+        
+        
+ 
  
     elif domain == 'book':
         in_file = "books/" + domain + "_reviews_" + str(year) + ".xml"
@@ -52,16 +56,18 @@ def main():
             out.write("")
         read_book_hotel(in_file=in_file, source_count=[], source_word2idx={}, target_count=[], target_phrase2idx={},
                         out_file=out_file)
-    else:
-        in_file = "electronics_reviews/" + domain + "_reviews_" + str(year) + ".xml"
-        out_file = "data_out/" + domain + "/raw_data_" + domain + "_" + str(year) + ".txt"
-        out_dir = os.path.dirname(out_file)
-        os.makedirs(out_dir, exist_ok=True)
-        with open(out_file, "w") as out:
-            out.write("")
-        read_book_hotel(in_file=in_file, source_count=[], source_word2idx={}, target_count=[], target_phrase2idx={},
-                        out_file=out_file)
+        
+        book_path = 'data_out/book/raw_data_book_2019.txt'
+        train_book = 'data_out/book/raw_data_book_train_2019.txt'
+        test_book = 'data_out/book/raw_data_book_test_2019.txt'
 
+        divide_samples(book_path, train_book, test_book)
+
+        print('train')
+        get_stats_from_file(train_book)
+        print('test')
+        get_stats_from_file(test_book)
+   
 
 if __name__ == '__main__':
     main()

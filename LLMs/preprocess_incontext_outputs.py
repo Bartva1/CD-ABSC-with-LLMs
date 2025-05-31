@@ -1,8 +1,8 @@
 import json
 import re
 
-input_path = "results/bm25/results_deepseek_llama.json"
-output_path = "results/bm25/processed_results_deepseek_llama.json"
+input_path = "results/deepseek_llama/SimCSE/3_shot/processed_results_deepseek_llama_restaurant_laptop_3_shot.json"
+output_path = "results/deepseek_llama/SimCSE/3_shot/processed_results_deepseek_llama_restaurant_laptop_3_shot.json"
 
 # with open(input_path, "r", encoding="utf-8") as f:
 #     data = json.load(f)
@@ -12,6 +12,9 @@ output_path = "results/bm25/processed_results_deepseek_llama.json"
 # for i in bad_indices:
 #     print(f"\nEntry {i}:\n{'-'*40}")
 #     print(data["results"][i])
+
+
+# exit()
 
 
 
