@@ -98,7 +98,8 @@ def main():
     key_openai = os.getenv("OPENAI_API_KEY") 
     key_groq = os.getenv("GROQ_API_KEY")  
     # (source_domain, target_domain, use_SimCSE, Model, use_transformation, shots)
-    test_info = [("laptop", "book", True, "llama3", False, 3)]
+    test_info = [("laptop", "book", True, "gemma", True, 3),
+                 ("laptop", "book", True, "llama3", True, 3)]
       
 
 
@@ -148,23 +149,25 @@ def main():
         #         print(f"Misaligned prediction at index {i}: {res} (aspect: {sample['aspect']})")
         # print("stop")
         # exit()
-
+        
         if use_transformation:
-            # train_data = transform_and_cache(
-            #     data=train_data,
-            #     cache_path=f"cache/paraphrased_train_{train_domain}.json",
+            extra_train_data = transform_and_cache(
+                data=train_data,
+                cache_path=f"cache/{model_choice}_paraphrased_train_{train_domain}.json",
+                model_name=model_choice,
+                api_key=key_groq
+            )
+            train_extra_corpus = [sample["paraphrased_text"] for sample in extra_train_data]
+
+            # test_data = transform_and_cache(
+            #     data=test_data,
+            #     cache_path=f"cache/paraphrased_test_{test_domain}.json",
             #     model_name=model_choice,
             #     api_key=key_groq
             # )
 
-            test_data = transform_and_cache(
-                data=test_data,
-                cache_path=f"cache/paraphrased_test_{test_domain}.json",
-                model_name=model_choice,
-                api_key=key_groq
-            )
-
         train_corpus = [sample["text"] for sample in train_data]
+        
 
         if use_SimCSE:
             tokenizer, simcse_model = load_simcse_model()
@@ -177,6 +180,16 @@ def main():
                 print("Computing SimCSE embeddings...")
                 train_embeddings = compute_embeddings(train_corpus, tokenizer, simcse_model)
                 np.save(embed_path, train_embeddings)
+
+            if use_transformation:
+                embed_extra_path = f"cache/embeddings_{train_domain}_transformed_simcse.npy"
+                if os.path.exists(embed_extra_path):
+                    print("Loading extra cached SimCSE embeddings...")
+                    train_extra_embeddings = np.load(embed_extra_path)
+                else:
+                    print("Computing extra SimCSE embeddings...")
+                    train_extra_embeddings = compute_embeddings(train_extra_corpus, tokenizer, simcse_model)
+                    np.save(embed_extra_path, train_extra_embeddings)
 
         openai_client_openai = OpenAI(api_key= key_openai)
         groq_client = Groq(api_key=key_groq)
@@ -199,43 +212,46 @@ def main():
 
             if use_SimCSE:
                 top_indices = SimCSE_demonstration_selection(sentence_text, train_embeddings, tokenizer, simcse_model, train_corpus, num_shots)
+                if use_transformation:
+                    top_extra_indices = SimCSE_demonstration_selection(sentence_text, train_extra_embeddings, tokenizer, simcse_model, train_extra_corpus, num_shots)
             else:
                 top_indices = BM25_demonstration_selection(sentence_text, train_corpus, num_shots)
+                if use_transformation:
+                    top_extra_indices = BM25_demonstration_selection(sentence_text, train_extra_corpus, num_shots)
 
             demonstrations = []
             for idx in top_indices:
                 demo = train_data[idx]
                 demonstrations.append(f"Sentence: {demo['template']}\nAspects: {demo['aspect']} ({demo['polarity']})")
             demonstrations = "\n\n".join(demonstrations)
-          
+
+            if use_transformation:
+                extra_demonstrations = []
+                for idx in top_extra_indices:
+                    demo = extra_train_data[idx]
+                    extra_demonstrations.append(f"Sentence: {demo['paraphrased_text']}\nAspects: {demo['aspect']} ({demo['polarity']})")
+                extra_demonstrations = "\n\n".join(extra_demonstrations)
 
             if num_shots > 0:
                 demo_block = f"\nDemonstrations:\n{demonstrations}\n"
+                if use_transformation:
+                    extra_demo_block = f"\nDomain-invariant Demonstrations:\n{extra_demonstrations}\n"
+                else:
+                    extra_demo_block = ""
             else:
                 demo_block = ""
-
-            if use_transformation and "paraphrased_text" in sample:
-                paraphrased_block = f"- Paraphrased Sentence: {sample['paraphrased_text']}\n"
-            else:
-                paraphrased_block = ""
+                extra_demo_block = ""
 
 
             instruction = """
             Please perform the Aspect-Based Sentiment Classification task. Given an aspect in a sentence, assign a sentiment label from ['positive', 'negative', 'neutral'].
-            {paraphrased_notice}
             """
-
-
-            if use_transformation and "paraphrased_text" in sample:
-                paraphrased_notice = "You are provided with both the original sentence and a paraphrased version. Consider both when making your prediction."
-            else:
-                paraphrased_notice = ""
 
             base_prompt = instruction + """
             {demo_block}
+            {extra_demo_block}
             Tested sample:
             - Original Sentence: {sentence}
-            {paraphrased_block}
             - Aspects: {aspects}
 
             Output:
@@ -245,22 +261,22 @@ def main():
             Always respond with a valid JSON. Do not include any extra characters, symbols, or text in or outside the JSON itself (including backticks, ", /)
             """
 
-            paraphrased_block = f"- Paraphrased Sentence: {sample['paraphrased_text']}\n" if use_transformation and "paraphrased_text" in sample else ""
-
             prompt = base_prompt.format(
                 demo_block=demo_block,
                 sentence=sentence_text,
-                paraphrased_block=paraphrased_block,
                 aspects=aspects,
-                paraphrased_notice=paraphrased_notice
+                extra_demo_block = extra_demo_block
             )
+
+            if i == 0:
+                print(prompt)
 
             try:
                 enforce_rate_limit(request_times=request_times, MAX_REQUESTS_PER_MINUTE=MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW=REQUEST_WINDOW)
                 output = get_response(prompt, client, model_choice)
             except Exception as e:
                 print(f"Error generating response: {e}")
-                output = ""  
+                output = "{}"  
 
             
             results[i] = output

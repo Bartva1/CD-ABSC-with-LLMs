@@ -5,7 +5,7 @@ import numpy as np
 
 def get_directory(use_SimCSE: bool, model: str, use_transformation: bool, num_shots: int) -> str:
     demo_text = "SimCSE" if use_SimCSE else "bm25"
-    transformation_dir_text = "test_transformation" if use_transformation else "no_test_transformation"
+    transformation_dir_text = "train_transformation" if use_transformation else "no_transformation"
     subdir = f"results/{model}/{demo_text}/{num_shots}_shot/{transformation_dir_text}" 
     if num_shots == 0:
         subdir = f"results/{model}/{num_shots}_shot/{transformation_dir_text}"

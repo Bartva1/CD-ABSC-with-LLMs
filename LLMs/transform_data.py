@@ -89,16 +89,7 @@ def paraphrase_sentence(sentence, aspect, client, model_name, i):
 
 def transform_and_cache(data, cache_path, model_name, api_key):
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-
-    if os.path.exists(cache_path):
-    #     print(f"[Cache] Loaded paraphrased data from {cache_path}")
-        
-    #     with open(cache_path, "r") as f:
-    #         loaded_f = json.load(f)
-    #         if "{}" not in loaded_f:
-    #             return loaded_f
-            
-        data = load_json_data(cache_path)
+    data = load_json_data(cache_path)
         
 
     print(f"[Transforming] Paraphrasing data and caching to {cache_path}")
@@ -113,15 +104,15 @@ def transform_and_cache(data, cache_path, model_name, api_key):
 
             if aspect not in sample["paraphrased_text"]:
                 paraphrased_sentence = sample["paraphrased_text"]
-                print(f"Sentence at index {i} is invalid, the aspect was: {aspect} and the paraphrased sentence was: {paraphrased_sentence}]")
-                sample["paraphrased_text"] = "{}"
-        
+                print(f"Sentence at index {i} is invalid, the aspect was: {aspect} and the paraphrased sentence was: {paraphrased_sentence}] \n Falling back to the original sentence: {sample['text']}")
+                sample["paraphrased_text"] = sample['text']
+                        
             with open(cache_path, "w") as f:
                     json.dump(data, f, indent=2)
+    
+    return data   
 
-       
 
-    return data
 
 # if you want to transform a seperate path without doing the classification, run the main function in this file
 if __name__ == "__main__":
@@ -132,7 +123,7 @@ if __name__ == "__main__":
     load_dotenv() 
     key_groq = os.getenv("GROQ_API_KEY")
 
-    model = "llama3"
+    model = "gemma"
     train_domains = ["laptop"]
     test_domains = []
     for train_domain in train_domains:
