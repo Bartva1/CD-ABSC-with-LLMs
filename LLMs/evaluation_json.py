@@ -1,57 +1,51 @@
 import json
 import os
 from collections import Counter, defaultdict
+import unicodedata
+import re
 
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from utilities import load_txt_data, get_directory, get_output_path
 
 LABELS = ["Positive", "Negative", "Neutral"]
 
-# data loading
-def load_txt_data(path):
-    samples = []
-    with open(path, "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]
-    assert len(lines) % 3 == 0, "Data format error: lines must be multiples of 3"
-   
-    for i in range(0, len(lines), 3):
-        template = lines[i]
-        aspect = lines[i + 1]
-        polarity_map = {"1": "Positive", "0": "Neutral", "-1": "Negative"}
-        polarity = polarity_map.get(lines[i + 2], "Positive")
-        sentence = template.replace("$T$", aspect)
-
-        samples.append({
-            "text": sentence,
-            "template": template,
-            "aspect": aspect,
-            "polarity": polarity
-        })
-
-    return samples
 
 
-def load_predictions(path):
+def load_predictions(path: str) -> list[dict]:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    predictions = data.get("results", [])
+    preds = data.get("results", [])
 
-    if all(isinstance(entry, str) for entry in predictions):
-        parsed = []
-        for entry in predictions:
+  
+    if all(isinstance(x, dict) for x in preds):
+        return preds
+
+    if all(isinstance(x, str) for x in preds):
+        out = []
+        for s in preds:
             try:
-                parsed.append(json.loads(entry))
+                out.append(json.loads(s))
             except json.JSONDecodeError:
-                parsed.append({})  
-        return parsed
-    elif all(isinstance(entry, dict) for entry in predictions):
-        return predictions
-    else:
-        raise ValueError("Unknown prediction format in predictions")
+                m = re.match(r'^\s*\{\s*"(.+?)"\s*:\s*(.+)\s*\}\s*$', s)
+
+                if m:
+                    key, val = m.groups()
+                    key_fixed = key.replace('"', '\\"')
+                    fixed = f'{{"{key_fixed}":{val}}}'
+                    try:
+                        out.append(json.loads(fixed))
+                        continue
+                    except json.JSONDecodeError:
+                        pass
+                out.append({})
+        return out
+    raise ValueError("Unknown prediction format in 'results'")
+
 
 
 def evaluate(test_data, results):
@@ -92,113 +86,126 @@ def evaluate(test_data, results):
     return metrics
 
 
+def normalize(text):
+    if not isinstance(text, str):
+        return ""
+    text = unicodedata.normalize("NFKC", text).lower().strip()
+    text = re.sub(r"[\"'`‘’“”]", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text
 
-def aggregate_predictions_to_df(test_data, results):
-    rows = []
-    for i, (sample, prediction) in enumerate(zip(test_data, results)):
-        aspect = sample["aspect"]
-        true_label = sample["polarity"].capitalize()
-        predicted_label = prediction.get(aspect, "").capitalize()
-
-        rows.append({
-            "index": i,
-            "text": sample["text"],
-            "template": sample["template"],
-            "aspect": aspect,
-            "true_label": true_label,
-            "predicted_label": predicted_label,
-            "correct": true_label == predicted_label
-        })
-
-    return pd.DataFrame(rows)
-
-def analyze_predictions(df, k=5):
-    summary = {}
-    for label in df["true_label"].unique():
-        cls_df = df[df["true_label"] == label]
-        summary[label] = {
-            "best": cls_df[cls_df["correct"]].head(k),
-            "worst": cls_df[~cls_df["correct"]].head(k)
-        }
-    return summary
-
-def visualize_misclassified(df, class_name=None, k=10):
-    df = df[~df["correct"]]
-    if class_name:
-        df = df[df["true_label"] == class_name]
-
-    print(df.head(k)[["text", "aspect", "true_label", "predicted_label"]])
-
-    plt.figure(figsize=(8, 5))
-    sns.countplot(data=df, x="true_label", hue="predicted_label", palette="Set2")
-    plt.title(f"Misclassifications{f' for {class_name}' if class_name else ''}")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.show()
-
-def evaluate_multiple_predictions(txt_path, json_paths, k=5):
+def evaluate_multiple_predictions(txt_path, json_paths, key_info, k=5):
     test_data = load_txt_data(txt_path)
-    all_data_frames = []
+
+    
+    base_df = pd.DataFrame({
+        "text": [s["text"] for s in test_data],
+        "aspect": [s["aspect"] for s in test_data],
+        "true_label": [s["polarity"].capitalize() for s in test_data],
+    })
 
     for json_path in json_paths:
         print(f"Evaluating: {json_path}")
         predictions = load_predictions(json_path)
         if len(predictions) != len(test_data):
-            print(f"Skipping due to length mismatch: {json_path}")
+            print(f"Skipping {json_path} due to length mismatch")
             continue
+        
+        # Track invalid predictions
+        invalid_preds = []
 
-        df = aggregate_predictions_to_df(test_data, predictions)
-        df["source_file"] = os.path.basename(json_path)
-        all_data_frames.append(df)
+        normalized_predictions = []
+        for prediction in predictions:
+            normalized_prediction = {
+                normalize(key): value.capitalize() for key, value in prediction.items()
+            }
+            normalized_predictions.append(normalized_prediction)
 
-    if not all_data_frames:
-        print("No valid predictions.")
-        return
+        for i, (sample, prediction) in enumerate(zip(test_data, normalized_predictions)):
+            aspect = normalize(sample["aspect"])
+            predicted_label = prediction.get(aspect, "")
+            
+            if predicted_label not in LABELS:
+                invalid_preds.append({
+                    "index": i,
+                    "aspect": aspect,
+                    "prediction": prediction
+                })
 
-    full_df = pd.concat(all_data_frames, ignore_index=True)
-    summary = analyze_predictions(full_df, k)
+        if invalid_preds:
+            print(f"\n[!] {len(invalid_preds)} invalid predictions found in {json_path}:")
+            for entry in invalid_preds:
+                print(f"  - Sample #{entry['index']}: aspect='{entry['aspect']}', "
+                      f"Prediction: {entry['prediction']}")
 
-    for cls, data in summary.items():
-        print(f"\n=== Class: {cls} ===")
-        print("Top-K Best:")
-        print(data["best"][["source_file", "text", "aspect", "true_label", "predicted_label"]])
-        print("Top-K Worst:")
-        print(data["worst"][["source_file", "text", "aspect", "true_label", "predicted_label"]])
+        
+        idx = json_paths.index(json_path)
+        model, train_domain, transformation_text = key_info[idx]
+        model_id = f"{model}_{train_domain}_{transformation_text}" 
+      
+        preds = [
+            pred.get(normalize(sample["aspect"]), "").capitalize()
+            for sample, pred in zip(test_data, normalized_predictions)
+        ]
+        base_df[model_id] = preds
 
-    visualize_misclassified(full_df)
-    return full_df
+   
+    model_cols = [col for col in base_df.columns if col not in ("text", "aspect", "true_label")]
+    base_df["num_wrong"] = base_df.apply(
+        lambda row: sum(row[col] != row["true_label"] for col in model_cols), axis=1
+    )
+
+    n_models = len(model_cols)
+    base_df["majority_wrong"] = base_df["num_wrong"] > n_models // 2
+
+    # # examples which are misclassified the most often by the selected models
+    # worst = base_df[base_df["majority_wrong"]].sort_values("num_wrong", ascending=False).head(k)
+    # print("\nMost frequently misclassified examples:")
+    # print(worst[["text", "aspect", "true_label", "num_wrong"] + model_cols])
+
+    # confusion matrix heatmap
+    wrong = base_df[base_df["majority_wrong"]]
+    melted = wrong.melt(id_vars=["text", "aspect", "true_label"], value_vars=model_cols,
+                        var_name="model", value_name="predicted")
+    melted["correct"] = melted["true_label"] == melted["predicted"]
+
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(
+        pd.crosstab(melted["true_label"], melted["predicted"]),
+        annot=True, fmt="d", cmap="Reds"
+    )
+    plt.title("Confusion Matrix Across Misclassified Examples")
+    plt.show()
+
+    return base_df
 
 if __name__ == "__main__":
-    test_info = [("restaurant", "book", "SimCSE", "gemma", ""),
-                 ("laptop", "book", "SimCSE", "gemma", ""),
-                 ("restaurant", "book", "SimCSE", "llama3", ""),
-                 ("laptop", "book", "SimCSE", "llama3", "_use_transformation")]
+    # source, target, use_SimCSE, model, use_transformation, shots
+    test_info = [("laptop", "book", True, "llama3", False, 3)]
   
 
-    domain_to_eval_data = defaultdict(lambda: {"ground_truth": "", "json_paths": []})
+    domain_to_eval_data = defaultdict(lambda: {"ground_truth": "", "json_paths": [], "key_info": []})
     result_paths = []
-    for info_tuple in test_info:
-        train_domain = info_tuple[0]
-        test_domain = info_tuple[1]
-        demo = info_tuple[2]
-        model = info_tuple[3]
-        use_transformation = info_tuple[4]
-        shots = 3
-
+    for train_domain, test_domain, use_SimCSE, model, use_transformation, num_shots in test_info:
         year = 2019 if test_domain == "book" else 2014
-        path_pred = f"results/{model}/{demo}/{shots}_shot/results_{model}_{train_domain}_{test_domain}_{shots}_shot{use_transformation}.json"
+        transformation_text = "with_transformation" if use_transformation else "no_transformation"
         path_ground_truth = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year}.txt"
-        
+
+        subdir = get_directory(use_SimCSE=use_SimCSE, model=model, use_transformation=use_transformation, num_shots=num_shots)
+        path_pred = get_output_path(source_domain=train_domain, target_domain=test_domain, model=model, use_transformation=use_transformation, num_shots=num_shots, subdir=subdir)
+   
         domain_to_eval_data[test_domain]["ground_truth"] = path_ground_truth
         domain_to_eval_data[test_domain]["json_paths"].append(path_pred)
+        domain_to_eval_data[test_domain]["key_info"].append((model, train_domain, transformation_text))
 
 
-        print(f"Source domain is: {train_domain}, target domain is: {test_domain} using model: {model}")
         test_data = load_txt_data(path_ground_truth)
         pred_data = load_predictions(path_pred)
-
+        print(f"\nSource domain: {train_domain}, target: {test_domain}, model: {model}, transformation: {use_transformation}")
         print(json.dumps(evaluate(test_data, pred_data), indent=2))
 
     for test_domain, paths in domain_to_eval_data.items():
         print(f"\n Evaluating predictions for test domain: {test_domain}")
-        print(evaluate_multiple_predictions(paths["ground_truth"], paths["json_paths"], k=5).head())
+        df = evaluate_multiple_predictions(paths["ground_truth"], paths["json_paths"], paths["key_info"], k=5)
+    
+        

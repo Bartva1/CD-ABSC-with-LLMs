@@ -16,6 +16,7 @@ from tqdm import tqdm
 from groq import Groq 
 from transformers import AutoTokenizer, AutoModel
 from transform_data import transform_and_cache
+from utilities import get_directory, get_output_path, get_response, enforce_rate_limit, load_txt_data
 
 
 # List of things to do:
@@ -23,65 +24,13 @@ from transform_data import transform_and_cache
 # 2. 
 
 
-def enforce_rate_limit(request_times, MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW):
-    current_time = time.time()
-    while request_times and current_time - request_times[0] > REQUEST_WINDOW:
-        request_times.popleft()
-    if len(request_times) >= MAX_REQUESTS_PER_MINUTE:
-        sleep_time = REQUEST_WINDOW - (current_time - request_times[0]) + 0.1
-        time.sleep(sleep_time)
-        return enforce_rate_limit(request_times, MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW)
-    request_times.append(current_time)
-   
-
-
-def load_txt_data(path):
-    samples = []
-    with open(path, "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]
-    assert len(lines) % 3 == 0, "Data format error: lines must be multiples of 3"
-   
-    for i in range(0, len(lines), 3):
-        template = lines[i]
-        aspect = lines[i + 1]
-        polarity_map = {"1": "Positive", "0": "Neutral", "-1": "Negative"}
-        polarity = polarity_map.get(lines[i + 2], "Positive")
-        sentence = template.replace("$T$", aspect)
-        
-        samples.append({
-            "text": sentence,
-            "template": template,
-            "aspect": aspect,
-            "polarity": polarity
-        })
-    return samples
-
-
-
-
-def get_response(prompt, client, model):
-    model_map = {
-        "gpt-4o": "gpt-4o-mini",
-        "llama3": "llama3-70b-8192",
-        "llama4": "meta-llama/llama-4-scout-17b-16e-instruct",
-        "deepseek_llama": "deepseek-r1-distill-llama-70b",
-        "gemma": "gemma2-9b-it",
-        "qwen32": "qwen-qwq-32b",
-        "llama4_mav": "meta-llama/llama-4-maverick-17b-128e-instruct"
-    }
-    model = model_map.get(model, model)
-    messages = [{"role": "user", "content": prompt}]
-    output = client.chat.completions.create(model=model, messages=messages, temperature=0)
-    return output.choices[0].message.content
-
-
 
 def BM25_demonstration_selection(query_sentence, corpus, k):
     bm25 = BM25Okapi([s.lower().split() for s in corpus])
     scores = bm25.get_scores( query_sentence.lower().split())
     return np.argsort(scores)[::-1][:k]
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def load_simcse_model():
     model_name = "princeton-nlp/sup-simcse-bert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -109,7 +58,6 @@ def SimCSE_demonstration_selection(query_sentence, embeddings, tokenizer, model,
     return np.argsort(similarities)[-k:][::-1]
 
 
-
 def evaluation(test_data, results):
     y_true, y_pred = [], []
 
@@ -132,40 +80,49 @@ def evaluation(test_data, results):
         "macro_f1": f1_score(y_true, y_pred, average="macro", labels=labels, zero_division=0) * 100,
     }
 
+def is_prediction_misaligned(prediction_str, test_sample):
+    try:
+        prediction = json.loads(prediction_str)
+    except json.JSONDecodeError:
+        return True 
+
+    aspect = test_sample.get("aspect")
+    if not isinstance(prediction, dict):
+        return True
+
+    return aspect not in prediction
 
 
 def main():
     load_dotenv()
     key_openai = os.getenv("OPENAI_API_KEY") 
     key_groq = os.getenv("GROQ_API_KEY")  
-    source_domain_target_domain_use_SimCSE_model = [("restaurant", "book", True, "llama3", True),
-                                                    ("laptop", "book", True, "llama3", True),
-                                                    ("laptop", "book", True, "llama3", False)]
+    # (source_domain, target_domain, use_SimCSE, Model, use_transformation, shots)
+    test_info = [("laptop", "book", True, "llama3", False, 3)]
       
 
 
-    for input_tuple in tqdm(source_domain_target_domain_use_SimCSE_model):
+    for input_tuple in tqdm(test_info):
         train_domain = input_tuple[0]
         test_domain = input_tuple[1]
         year_train = 2019 if train_domain == "book" else 2014
         year_test = 2019 if test_domain == "book" else 2014
        
-
         train_file_path = f"data_out/{train_domain}/raw_data_{train_domain}_train_{year_train}.txt"
         test_file_path = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year_test}.txt"
-
 
         use_SimCSE = input_tuple[2] # if true, use SimCSE, otherwise use BM25 for demonstration selection
         model_choice = input_tuple[3] # options: "llama3", "llama4", "deepseek_llama", "gemma", "qwen32"
         use_transformation = input_tuple[4]
-        num_shots = 3  # number of demonstrations to use
-        print(f"Processing source domain: {train_domain}, target domain: {test_domain}, using SimCSE: {use_SimCSE}, num shots: {num_shots}")
+        num_shots = input_tuple[5]  # number of demonstrations to use
 
+        if num_shots == 0:
+            print(f"\n Processing target domain: {test_domain}, using model: {model_choice}, using transformation? {use_transformation}, num_shots: {num_shots}")
+        else:
+            print(f"\n Processing source_domain: {train_domain}, target domain: {test_domain}, using model: {model_choice}, using SimCSE? {use_SimCSE,} using transformation? {use_transformation}, num_shots: {num_shots}")
         
-        subdir = f"results/{model_choice}/SimCSE/{num_shots}_shot" if use_SimCSE else f"results/{model_choice}/bm25/{num_shots}_shot"
-        transformation_text = "_use_transformation" if use_transformation else ""
-        filepath = os.path.join(subdir, f"results_{model_choice}_{train_domain}_{test_domain}_{num_shots}_shot{transformation_text}.json")
-
+        subdir = get_directory(use_SimCSE=use_SimCSE, model=model_choice, use_transformation=use_transformation, num_shots=num_shots)
+        filepath = get_output_path(source_domain=train_domain, target_domain=test_domain, model=model_choice, use_transformation=use_transformation, num_shots=num_shots, subdir=subdir)
         os.makedirs(subdir, exist_ok=True)
         
         if os.path.exists(filepath):
@@ -186,6 +143,11 @@ def main():
         train_data = load_txt_data(train_file_path)
         test_data = load_txt_data(test_file_path)
        
+        # for i, (res, sample) in enumerate(zip(results, test_data)):
+        #     if is_prediction_misaligned(res, sample):
+        #         print(f"Misaligned prediction at index {i}: {res} (aspect: {sample['aspect']})")
+        # print("stop")
+        # exit()
 
         if use_transformation:
             # train_data = transform_and_cache(
@@ -220,13 +182,15 @@ def main():
         groq_client = Groq(api_key=key_groq)
         client = groq_client
 
+     
+        while len(results) < len(test_data):
+            results.append("{}")
 
-        already_done = len(results)
-        print(f"Resuming from index {already_done}")
+        for i in tqdm(range(len(test_data))):
+            if results[i].strip() != "{}":
+                continue
 
-        for i, sample in tqdm(enumerate(test_data)):
-            if i < already_done:
-                continue  # Skip already processed
+            sample = test_data[i]
 
             sentence_text = sample["text"]
             template = sample["template"]
@@ -296,9 +260,11 @@ def main():
                 output = get_response(prompt, client, model_choice)
             except Exception as e:
                 print(f"Error generating response: {e}")
-                output = "{}"  
+                output = ""  
 
-            results.append(output)
+            
+            results[i] = output
+         
             if len(inference_prompts) < 10:
                 inference_prompts.append(prompt)
 
@@ -309,7 +275,6 @@ def main():
                 }, f, indent=2)
 
         metrics = evaluation(test_data, results)
-
         print(json.dumps(metrics, indent=2))
         with open(filepath, 'w') as f:
             json.dump({
@@ -318,7 +283,6 @@ def main():
                 "inference_prompts": inference_prompts
             }, f, indent=2)
 
-        print(json.dumps(metrics, indent=2))
 
 
 if __name__ == "__main__":
