@@ -170,6 +170,42 @@ def evaluate_multiple_predictions(txt_path, json_paths, key_info):
     model_cols = [col for col in base_df.columns if col not in ("text", "aspect", "true_label")]
 
     
+    # per_label_accuracy = defaultdict(list)  
+    # for model_id in model_cols:
+    #     y_true = base_df["true_label"]
+    #     y_pred = base_df[model_id]
+    #     correct = (y_true == y_pred)
+    #     for label in LABELS:
+    #         total = sum(y_true == label)
+    #         correct_label = sum((y_true == label) & (y_pred == label))
+    #         acc = correct_label / total if total > 0 else 0.0
+    #         per_label_accuracy[label].append(acc)
+
+    # avg_label_accuracy = {
+    #     label: sum(accs) / len(accs) if accs else 0.0
+    #     for label, accs in per_label_accuracy.items()
+    # }
+
+   
+    # def majority_with_tiebreak(row):
+    #     pred_counts = Counter([row[col] for col in model_cols])
+    #     most_common = pred_counts.most_common()
+    #     if len(most_common) == 1 or most_common[0][1] > most_common[1][1]:
+    #         return most_common[0][0]  # clear majority
+    #     tied_preds = [label for label, count in most_common if count == most_common[0][1]]
+    #     best_label = max(tied_preds, key=lambda l: avg_label_accuracy.get(l, 0))
+    #     return best_label
+
+    # base_df["majority_vote"] = base_df.apply(majority_with_tiebreak, axis=1)
+
+    # # Compute metrics for majority_vote
+    # y_true_majority = base_df["true_label"].tolist()
+    # y_pred_majority = base_df["majority_vote"].tolist()
+    # majority_metrics = compute_performance_metrics(y_true_majority, y_pred_majority)
+    # model_metrics["majority_vote"] = majority_metrics
+
+    # model_cols.append("majority_vote")
+    
     base_df["num_wrong"] = base_df.apply(
         lambda row: sum(row[col] != row["true_label"] for col in model_cols), axis=1
     )
@@ -205,8 +241,8 @@ if __name__ == "__main__":
     test_info = generate_info(
         source_domains=["book", "laptop", "restaurant"],
         target_domains=["book", "laptop", "restaurant"],
-        demo="SimCSE",
-        model="llama4_scout",
+        demos=["bm25", "SimCSE"],
+        models=["gemma", "llama4_scout"],
         shot_infos=shot_infos,
         indices=[0, 1, 2]
     )
@@ -216,7 +252,7 @@ if __name__ == "__main__":
     for train_domain, test_domain, demo_method, model, shot_info in test_info:
         year = 2019 if test_domain == "book" else 2014
         path_ground_truth = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year}.txt"
-        subdir = get_directory(demo=demo_method, model=model, shot_source=shot_info['sources'], num_shots=shot_info['num_shots'])
+        subdir = get_directory(demo=demo_method, model=model, shot_info=shot_info)
         path_pred = get_output_path(source_domain=train_domain, target_domain=test_domain, num_shots=shot_info['num_shots'], subdir=subdir)
 
         domain_to_eval_data[test_domain]["ground_truth"] = path_ground_truth

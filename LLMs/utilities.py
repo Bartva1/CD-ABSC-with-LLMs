@@ -3,7 +3,9 @@ import time
 import json
 import numpy as np
 
-def get_directory(demo: str, model: str, shot_source: list[str], num_shots: int) -> str:
+def get_directory(demo: str, model: str, shot_info) -> str:
+    num_shots = shot_info["num_shots"]
+    shot_source = shot_info["source"]
     subdir = f"results/{model}/{demo}/{num_shots}_shot/{'_'.join(sorted(shot_source))}" 
     if num_shots == 0:
         subdir = f"results/{model}/{num_shots}_shot"
@@ -117,14 +119,31 @@ def remove_entries(file_path: str, mask: list[int]) -> None:
 
 
 
-def generate_info(source_domains: list[str], target_domains: list[str], demo: str, model: str, shot_infos: list[dict], indices: list[int]):
+def generate_info(source_domains: list[str], target_domains: list[str], demos: list[str], models: list[str], shot_infos: list[dict], indices: list[int]):
     info = []
-    for source_domain in source_domains:
-        for target_domain in target_domains:
-            if target_domain == source_domain:
-                continue
-            for idx in indices:
-                shot_info = shot_infos[idx]
-                info.append((source_domain, target_domain, demo, model, shot_info))
+    for model in models:
+        for demo in demos: 
+            for source_domain in source_domains:
+                for target_domain in target_domains:
+                    if target_domain == source_domain:
+                        continue
+                    for idx in indices:
+                        shot_info = shot_infos[idx]
+                        info.append((source_domain, target_domain, demo, model, shot_info))
     return info
 
+
+
+def extract_first_200(input_file, output_file):
+    
+    with open(input_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    first_200 = data[:200]
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(first_200, f, indent=2, ensure_ascii=False)
+
+
+if __name__ == "__main__":
+    extract_first_200("cache\llama4_scout\paraphrased\dependent_train_data_book.json", "cache\llama4_scout\paraphrased\dependent_train_data_book_200.json")
+    extract_first_200("cache\llama4_scout\paraphrased\independent_train_data_book.json", "cache\llama4_scout\paraphrased\independent_train_data_book_200.json")

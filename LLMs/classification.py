@@ -180,6 +180,33 @@ def generate_prompt(sentence, aspects, demo_block, extra_demo_block):
     """
     return prompt
 
+def load_dependent_independent_sources(base_path, domain, tokenizer, model):
+    dep_path = os.path.join(base_path, f"dependent_train_data_{domain}_200.json")
+    indep_path = os.path.join(base_path, f"independent_train_data_{domain}_200.json")
+
+    with open(dep_path, "r") as f:
+        dep_data = json.load(f)
+    with open(indep_path, "r") as f:
+        indep_data = json.load(f)
+
+    dep_corpus = [d["paraphrased_text"] for d in dep_data]
+    indep_corpus = [d["paraphrased_text"] for d in indep_data]
+
+    dep_embed_path = os.path.join(base_path, f"../embeddings/dependent_embeddings_{domain}.npy")
+    indep_embed_path = os.path.join(base_path, f"../embeddings/independent_embeddings_{domain}.npy")
+
+    dep_embeddings = (
+        np.load(dep_embed_path)
+        if os.path.exists(dep_embed_path)
+        else compute_and_cache_embeddings(dep_corpus, tokenizer, model, dep_embed_path)
+    )
+    indep_embeddings = (
+        np.load(indep_embed_path)
+        if os.path.exists(indep_embed_path)
+        else compute_and_cache_embeddings(indep_corpus, tokenizer, model, indep_embed_path)
+    )
+
+    return dep_data, indep_data, dep_embeddings, indep_embeddings
 
 
 def main():
@@ -192,14 +219,15 @@ def main():
     shot_infos = [{"num_shots": 6, "sources": ["regular"]},
                   {"num_shots": 6, "sources": ["paraphrased"]},
                   {"num_shots": 3, "sources": ["paraphrased", "regular"]},
+                  {"num_shots": 3, "sources": ["independent", "dependent"]},
                   {"num_shots": 0, "sources": []}]
     
 
     test_info = generate_info(
-        source_domains=["laptop"],
-        target_domains=["book"],
-        demo="SimCSE",
-        model="llama4_scout",
+        source_domains=["book"],
+        target_domains=["book", "laptop", "restaurant"],
+        demos=["SimCSE"],
+        models=["gemma"],
         shot_infos=shot_infos,
         indices=[3]
     )
@@ -210,12 +238,12 @@ def main():
         year_test = 2019 if test_domain == "book" else 2014
         train_path = f"data_out/{train_domain}/raw_data_{train_domain}_train_{year_train}.txt"
         test_path = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year_test}.txt"
+            
 
         shot_explanation = "" if shot_info["num_shots"] == 0 else f"shots from sources: {', '.join(shot_info['sources'])}"
-
         print(f"\nRunning {demo_method} with {shot_explanation} ({shot_info['num_shots']}) on {train_domain}→{test_domain}, model: {model_choice}")  
 
-        subdir = get_directory(demo=demo_method, model=model_choice, shot_source=shot_info["sources"], num_shots=shot_info["num_shots"])
+        subdir = get_directory(demo=demo_method, model=model_choice, shot_info=shot_info)
         filepath = get_output_path(source_domain=train_domain, target_domain=test_domain, num_shots=shot_info['num_shots'], subdir=subdir)
         os.makedirs(subdir, exist_ok=True)
        
@@ -228,11 +256,11 @@ def main():
         train_data, test_data, train_embeddings, paraphrased_train_data, paraphrased_train_embeddings = load_data_and_embeddings(
             train_path, test_path, demo_method, model_choice, train_domain, key_groq_paid, tokenizer=simcse_tokenizer, sim_model=simcse_model, use_paraphrase=include_paraphrased
         )
-        with open("cache/llama4_scout/paraphrased/test_data_book.json", "r") as f:
-            test_data = json.load(f)
 
        
-   
+        base_cache_path = "cache/llama4_scout/paraphrased"
+        dependent_data, independent_data, dependent_embeds, independent_embeds = load_dependent_independent_sources(base_cache_path, train_domain, simcse_tokenizer, simcse_model)
+
        
         openai_client = OpenAI(api_key=key_openai)
         groq_client = Groq(api_key=key_groq)
@@ -248,6 +276,8 @@ def main():
             if results[i].strip() != "{}":
                 continue
             sample = test_data[i]
+            sentence = sample["text"]
+            aspect = sample["aspect"]
 
             demo_indices = select_demonstration_indices(
             sentence=sample["text"],
@@ -258,12 +288,19 @@ def main():
             paraphrased_train_corpus=[d["paraphrased_text"] for d in paraphrased_train_data] if include_paraphrased else None,
             paraphrased_train_embeddings=paraphrased_train_embeddings if include_paraphrased else None,
             tokenizer=simcse_tokenizer, sim_model=simcse_model
-        )
+        )   
 
+            dep_indices = SimCSE_demonstration_selection(sentence, dependent_embeds, simcse_tokenizer, simcse_model, [d["paraphrased_text"] for d in dependent_data], shot_info["num_shots"])
+            indep_indices = SimCSE_demonstration_selection(sentence, independent_embeds, simcse_tokenizer, simcse_model, [d["paraphrased_text"] for d in independent_data], shot_info["num_shots"])
 
-            demo_block = format_demonstrations(demo_indices["regular"], train_data, "regular") if include_regular else ""
-            extra_demo_block = format_demonstrations(demo_indices["paraphrased"], paraphrased_train_data, "paraphrased") if include_paraphrased else ""
-            prompt = generate_prompt(sample["paraphrased_text"], sample["aspect"], demo_block, extra_demo_block)
+            dep_block = format_demonstrations(dep_indices, dependent_data, "dependent")
+            indep_block = format_demonstrations(indep_indices, independent_data, "independent")
+
+            prompt = generate_prompt(sentence, aspect, dep_block, indep_block)
+           
+            # demo_block = format_demonstrations(demo_indices["regular"], train_data, "regular") if include_regular else ""
+            # extra_demo_block = format_demonstrations(demo_indices["paraphrased"], paraphrased_train_data, "paraphrased") if include_paraphrased else ""
+            # prompt = generate_prompt(sample["text"], sample["aspect"], demo_block, extra_demo_block)
             
             try:
                 enforce_rate_limit(request_times, MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW)

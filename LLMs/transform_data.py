@@ -16,6 +16,102 @@ MAX_REQUESTS_PER_MINUTE = 1000
 REQUEST_WINDOW = 60
 request_times = deque()
 
+DOMAIN_EXAMPLES = {
+    "laptop": {
+        "dependent": [
+            ("The battery drains quickly, but the customer support was helpful.", "The battery drains quickly.", "battery", "negative"),
+            ("The screen is vibrant, though the packaging looked cheap.", "The screen is vibrant.", "screen", "positive"),
+            ("I had issues with the keyboard layout, although the price was fair.", "I had issues with the keyboard layout.", "keyboard layout", "negative"),
+        ],
+        "independent": [
+            ("The battery drains quickly, but the customer support was helpful.", "The customer support was helpful.", "customer support", "positive"),
+            ("The screen is vibrant, though the packaging looked cheap.", "The packaging looked cheap.", "packaging", "negative"),
+            ("I had issues with the keyboard layout, although the price was fair.", "The price was fair.", "price", "positive"),
+        ]
+    },
+    "restaurant": {
+        "dependent": [
+            ("The steak was undercooked, but the ambience was cozy.", "The steak was undercooked.", "steak", "negative"),
+            ("The waitress was inattentive, even though the background music was nice.", "The waitress was inattentive.", "waitress", "negative"),
+            ("The pasta was perfectly cooked, although the chairs were uncomfortable.", "The pasta was perfectly cooked.", "pasta", "positive"),
+        ],
+        "independent": [
+            ("The steak was undercooked, but the ambience was cozy.", "The ambience was cozy.", "ambience", "positive"),
+            ("The waitress was inattentive, even though the background music was nice.", "The background music was nice.", "background music", "positive"),
+            ("The pasta was perfectly cooked, although the chairs were uncomfortable.", "The chairs were uncomfortable.", "chairs", "negative"),
+        ]
+    },
+    "book": {
+        "dependent": [
+            ("The plot was predictable, but I liked the style.", "The plot was predictable.", "plot", "negative"),
+            ("The characters were well-developed, although the shipping took long.", "The characters were well-developed.", "characters", "positive"),
+            ("The ending was rushed, though the price was reasonable.", "The ending was rushed.", "ending", "negative"),
+        ],
+        "independent": [
+            ("The plot was predictable, but I liked the style.", "I liked the style.", "the style", "positive"),
+            ("The characters were well-developed, although the shipping took long.", "The shipping took long.", "shipping", "negative"),
+            ("The ending was rushed, though the price was reasonable.", "The price was reasonable.", "price", "positive"),
+        ]
+    }
+}
+
+PROMPT_TEMPLATES = {
+    "dependent": """You are transforming sentences for few-shot learning in cross-domain aspect-based sentiment classification.
+
+Given a sentence from the {domain} domain, rewrite it to retain only **domain-specific** content.
+
+Your output must include:
+- A domain-specific aspect (e.g., battery for laptops, food for restaurants, plot for books)
+- A sentiment polarity (positive/negative/neutral) related to that aspect
+
+Remove domain-independent parts.
+
+Output the transformed sentence, aspect in the new sentence, and polarity with regards to that aspect in a tuple: ("sentence","aspect","polarity").
+Do not include explanations or anything extra.
+
+{examples}
+
+Now transform the following sentence:
+{sentence}
+""",
+"independent": """You are transforming sentences for few-shot learning in cross-domain aspect-based sentiment classification.
+
+Given a sentence from the {domain} domain, rewrite it to retain only **domain-independent** content.
+
+Your output must include:
+- A general aspect (e.g., price, packaging, design, customer service)
+- A sentiment expression (positive/negative/neutral) related to that aspect
+
+Remove domain-specific parts.
+
+Output the transformed sentence, aspect in the new sentence, and polarity with regards to that aspect in a tuple: ("sentence","aspect","polarity").
+Do not include explanations or anything extra.
+
+{examples}
+
+Now transform the following sentence:
+{sentence}
+""",
+"basic": """
+    Instruction:
+    You will be given a sentence and an aspect term. 
+    
+    Your task is to paraphrase the sentence so that:
+    - The meaning and sentiment with regards to the aspect term "{aspect}" remain unchanged.
+    - Any domain-specific words are replaced with generic language.
+    - The word "{aspect}" MUST appear exactly as given, with no changes.
+
+    Test Sample:
+    - Sentence: {sentence}
+    - Aspect: {aspect}
+
+    Output:
+    Return ONLY the paraphrased sentence. Do NOT add extra text or formatting.
+    Make sure the word "{aspect}" is present exactly as given in the paraphrased sentence.
+    """
+}
+
+
 def fix_missing_spaces(text):
     # Add a space between a lowercase letter and a digit, if not already there
     return re.sub(r'(?<=[a-zA-Z])(?=\d)', ' ', text)
@@ -89,36 +185,40 @@ def get_response_with_correction(prompt, client, model, aspect, max_retries, i):
     
     return response
 
-
-def paraphrase_sentence(sentence, aspect, client, model_name, i):
-    prompt = f"""
-    Instruction:
-    You will be given a sentence and an aspect term. 
+def build_prompt(domain: str, transformation_type: str, sentence: str, aspect) -> str:
+    assert domain in DOMAIN_EXAMPLES, f"Unknown domain: {domain}"
+    assert transformation_type in ["dependent", "independent", "basic"], "transformation_type must be 'dependent', 'independent', or 'basic'"
     
-    Your task is to paraphrase the sentence so that:
-    - The meaning and sentiment with regards to the aspect term "{aspect}" remain unchanged.
-    - Any domain-specific words are replaced with generic language.
-    - The word "{aspect}" MUST appear exactly as given, with no changes.
+    examples = DOMAIN_EXAMPLES[domain][transformation_type]
+    formatted_examples = "\n".join(
+        f"""Example {i+1}:
+        Original: {orig}
+        Aspect: {aspect}
+        Polarity: {polarity}
+        Output: {out}""" for i, (orig, out, aspect, polarity) in enumerate(examples)
+            )
+    
+    template = PROMPT_TEMPLATES[transformation_type]
+    prompt = template.format(domain=domain, examples=formatted_examples, sentence=sentence, aspect=aspect)
+    return prompt
 
-    Test Sample:
-    - Sentence: {sentence}
-    - Aspect: {aspect}
 
-    Output:
-    Return ONLY the paraphrased sentence. Do NOT add extra text or formatting.
-    Make sure the word "{aspect}" is present exactly as given in the paraphrased sentence.
-    """
+
+
+
+def get_transformation(prompt_version, domain, sentence, aspect, client, model_name, i):
+    prompt = build_prompt(domain, transformation_type=prompt_version, sentence=sentence, aspect=aspect)
 
     try:
         enforce_rate_limit(request_times=request_times, MAX_REQUESTS_PER_MINUTE=MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW=REQUEST_WINDOW)
-        response = get_response_with_correction(prompt, client, model_name, aspect, 1, i)
+        response = get_response_with_correction(prompt, client, model_name, aspect, 0, i)
         return response.strip()
     except Exception as e:
         print(f" \n [Error] Paraphrasing failed: {e}")
         return ""
 
 
-def transform_and_cache(data, cache_path, model_name, api_key):
+def transform_and_cache(domain, prompt_version, data, cache_path, model_name, api_key):
     if os.path.exists(cache_path):
         with open(cache_path, "r") as f:
             data = json.load(f)
@@ -130,6 +230,7 @@ def transform_and_cache(data, cache_path, model_name, api_key):
             
             if complete:
                 print("[CACHE] Retrieving transformed data...")
+                return data
 
 
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
@@ -142,12 +243,12 @@ def transform_and_cache(data, cache_path, model_name, api_key):
         if "paraphrased_text" not in sample or sample["paraphrased_text"] == "{}":
             sentence = sample["text"]
             aspect = sample["aspect"]
-            sample["paraphrased_text"]= paraphrase_sentence(sentence, aspect, client, model_name, i)
+            sample["paraphrased_text"]= get_transformation(prompt_version, domain, sentence, aspect, client, model_name, i)
 
-            if not is_aspect_in_response(aspect, sample['paraphrased_text']):
-                paraphrased_sentence = sample["paraphrased_text"]
-                print(f"Sentence at index {i} is invalid, the aspect was: {aspect} and the paraphrased sentence was: {paraphrased_sentence}] \n Falling back to the original sentence: {sample['text']}")
-                sample["paraphrased_text"] = sample['text']
+            # if not is_aspect_in_response(aspect, sample['paraphrased_text']):
+            #     paraphrased_sentence = sample["paraphrased_text"]
+            #     print(f"Sentence at index {i} is invalid, the aspect was: {aspect} and the paraphrased sentence was: {paraphrased_sentence}] \n Falling back to the original sentence: {sample['text']}")
+            #     sample["paraphrased_text"] = sample['text']
                         
             with open(cache_path, "w") as f:
                     json.dump(data, f, indent=2)
@@ -164,15 +265,18 @@ if __name__ == "__main__":
     key_groq_paid = os.getenv("GROQ_PAID_KEY")
 
     model = "llama4_scout"
-    train_domains = []
-    test_domains = ["book"]
+    train_domains = ["book"]
+    test_domains = []
+    prompt_version = "independent"
     for train_domain in train_domains:
         year = 2019 if train_domain == "book" else 2014
         train_file_path = f"data_out/{train_domain}/raw_data_{train_domain}_train_{year}.txt"
         train_data = load_txt_data(train_file_path)
         train_data = transform_and_cache(
+            domain=train_domain,
             data=train_data,
-            cache_path=f"cache/{model}/paraphrased/train_data_{train_domain}.json",
+            prompt_version=prompt_version,
+            cache_path=f"cache/{model}/paraphrased/{prompt_version}_train_data_{train_domain}.json",
             model_name=model,
             api_key=key_groq_paid
         )
@@ -182,6 +286,7 @@ if __name__ == "__main__":
         test_data = load_txt_data(test_file_path)
        
         test_data = transform_and_cache(
+            domain=train_domain,
             data=test_data,
             cache_path=f"cache/{model}/paraphrased/test_data_{test_domain}.json",
             model_name=model,
