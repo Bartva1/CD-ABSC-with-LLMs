@@ -1,4 +1,4 @@
 .env
-# results
-# cache
-# data_out
+results
+cache
+data_out

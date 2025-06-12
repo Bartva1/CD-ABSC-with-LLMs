@@ -3,19 +3,16 @@ import time
 import json
 import numpy as np
 
-def get_directory(use_SimCSE: bool, model: str, use_transformation: bool, num_shots: int) -> str:
-    demo_text = "SimCSE" if use_SimCSE else "bm25"
-    transformation_dir_text = "train_transformation" if use_transformation else "no_transformation"
-    subdir = f"results/{model}/{demo_text}/{num_shots}_shot/{transformation_dir_text}" 
+def get_directory(demo: str, model: str, shot_source: list[str], num_shots: int) -> str:
+    subdir = f"results/{model}/{demo}/{num_shots}_shot/{'_'.join(sorted(shot_source))}" 
     if num_shots == 0:
-        subdir = f"results/{model}/{num_shots}_shot/{transformation_dir_text}"
+        subdir = f"results/{model}/{num_shots}_shot"
     return subdir
 
-def get_output_path(source_domain: str, target_domain: str, model: str, use_transformation: bool, num_shots: int, subdir: str) -> str:
-    transformation_text = "_use_transformation" if use_transformation else ""
-    filepath = os.path.join(subdir, f"results_{model}_{source_domain}_{target_domain}_{num_shots}_shot{transformation_text}.json")
+def get_output_path(source_domain: str, target_domain: str, num_shots: int, subdir: str) -> str:
+    filepath = os.path.join(subdir, f"results_{source_domain}_{target_domain}.json")
     if num_shots == 0:
-        filepath = os.path.join(subdir, f"results_{model}_{target_domain}_{num_shots}_shot{transformation_text}.json")
+        filepath = os.path.join(subdir, f"results_{target_domain}.json")
     return filepath
 
 
@@ -24,7 +21,7 @@ def get_response(prompt, client, model):
     model_map = {
         "gpt-4o": "gpt-4o-mini",
         "llama3": "llama3-70b-8192",
-        "llama4": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "llama4_scout": "meta-llama/llama-4-scout-17b-16e-instruct",
         "deepseek_llama": "deepseek-r1-distill-llama-70b",
         "gemma": "gemma2-9b-it",
         "qwen32": "qwen-qwq-32b",
@@ -117,8 +114,17 @@ def remove_entries(file_path: str, mask: list[int]) -> None:
             json.dump(new_contents, f, indent=2)
         print(f"Removed {len(mask)} entries from {file_path}")
 
-if __name__ == "__main__":
-    subdir = get_directory(use_SimCSE=True, model="gemma", use_transformation=False, num_shots=0)
-    file_path = get_output_path(source_domain="laptop", target_domain="restaurant", model="gemma", use_transformation=False, num_shots=0, subdir=subdir)
-    mask = np.arange(0,638)
-    remove_entries(file_path=file_path, mask=mask)
+
+
+
+def generate_info(source_domains: list[str], target_domains: list[str], demo: str, model: str, shot_infos: list[dict], indices: list[int]):
+    info = []
+    for source_domain in source_domains:
+        for target_domain in target_domains:
+            if target_domain == source_domain:
+                continue
+            for idx in indices:
+                shot_info = shot_infos[idx]
+                info.append((source_domain, target_domain, demo, model, shot_info))
+    return info
+

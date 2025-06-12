@@ -1,18 +1,49 @@
 import os
 import json
 import time
+import unicodedata
+import re
+
 from collections import deque
 from tqdm import tqdm
+
 
 from dotenv import load_dotenv
 from groq import Groq
 from utilities import get_response, enforce_rate_limit, load_txt_data, load_json_data
 
+MAX_REQUESTS_PER_MINUTE = 1000
+REQUEST_WINDOW = 60
+request_times = deque()
+
+def fix_missing_spaces(text):
+    # Add a space between a lowercase letter and a digit, if not already there
+    return re.sub(r'(?<=[a-zA-Z])(?=\d)', ' ', text)
+
+def normalize(text):
+    if not isinstance(text, str):
+        return ""
+    text = unicodedata.normalize("NFKC", text).lower().strip()
+    text = re.sub(r"'s\b", "", text)               
+    text = re.sub(r"[\"'`‘’“”]", "", text)         
+    text = re.sub(r"\s+", " ", text)
+    text = fix_missing_spaces(text)
+    return text
+
+
+
+def is_aspect_in_response(aspect, response):
+    norm_aspect = normalize(aspect)
+    norm_response = normalize(response)
+    return norm_aspect in norm_response
+
+
 def get_response_with_correction(prompt, client, model, aspect, max_retries, i):
+        
     model_map = {
         "gpt-4o": "gpt-4o-mini",
         "llama3": "llama3-70b-8192",
-        "llama4": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "llama4_scout": "meta-llama/llama-4-scout-17b-16e-instruct",
         "deepseek_llama": "deepseek-r1-distill-llama-70b",
         "gemma": "gemma2-9b-it",
         "qwen32": "qwen-qwq-32b",
@@ -30,11 +61,11 @@ def get_response_with_correction(prompt, client, model, aspect, max_retries, i):
     
     response = output.choices[0].message.content.strip()
     
-    # Check if aspect is missing
-    while aspect not in response and max_retries > 0:
+    
+    while not is_aspect_in_response(aspect, response) and max_retries > 0:
         print(f"\n Reprompting for index {i}")
         correction_prompt = f"""
-        The previous response was a paraphrase of a sentence, but it did not include the required aspect term "{aspect}".
+        The previous response was a paraphrase of the sentence, but it did not include the required aspect term "{aspect}".
 
         Please revise the paraphrased sentence to:
         - Include the word "{aspect}" exactly as written
@@ -75,7 +106,7 @@ def paraphrase_sentence(sentence, aspect, client, model_name, i):
 
     Output:
     Return ONLY the paraphrased sentence. Do NOT add extra text or formatting.
-    Make sure the word "{aspect}" present exactly as given in the paraphrased sentence.
+    Make sure the word "{aspect}" is present exactly as given in the paraphrased sentence.
     """
 
     try:
@@ -88,10 +119,21 @@ def paraphrase_sentence(sentence, aspect, client, model_name, i):
 
 
 def transform_and_cache(data, cache_path, model_name, api_key):
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    data = load_json_data(cache_path)
-        
+    if os.path.exists(cache_path):
+        with open(cache_path, "r") as f:
+            data = json.load(f)
+            complete = True
+            for i in range(len(data)):
+                sample = data[i]
+                if "paraphrased_text" not in sample or sample["paraphrased_text"] == "{}":
+                    complete = False
+            
+            if complete:
+                print("[CACHE] Retrieving transformed data...")
 
+
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+ 
     print(f"[Transforming] Paraphrasing data and caching to {cache_path}")
     client = Groq(api_key=api_key)     
 
@@ -102,7 +144,7 @@ def transform_and_cache(data, cache_path, model_name, api_key):
             aspect = sample["aspect"]
             sample["paraphrased_text"]= paraphrase_sentence(sentence, aspect, client, model_name, i)
 
-            if aspect not in sample["paraphrased_text"]:
+            if not is_aspect_in_response(aspect, sample['paraphrased_text']):
                 paraphrased_sentence = sample["paraphrased_text"]
                 print(f"Sentence at index {i} is invalid, the aspect was: {aspect} and the paraphrased sentence was: {paraphrased_sentence}] \n Falling back to the original sentence: {sample['text']}")
                 sample["paraphrased_text"] = sample['text']
@@ -116,25 +158,23 @@ def transform_and_cache(data, cache_path, model_name, api_key):
 
 # if you want to transform a seperate path without doing the classification, run the main function in this file
 if __name__ == "__main__":
-    MAX_REQUESTS_PER_MINUTE = 30
-    REQUEST_WINDOW = 60
-    request_times = deque()
-
+    
     load_dotenv() 
     key_groq = os.getenv("GROQ_API_KEY")
+    key_groq_paid = os.getenv("GROQ_PAID_KEY")
 
-    model = "gemma"
-    train_domains = ["laptop"]
-    test_domains = []
+    model = "llama4_scout"
+    train_domains = []
+    test_domains = ["book"]
     for train_domain in train_domains:
         year = 2019 if train_domain == "book" else 2014
         train_file_path = f"data_out/{train_domain}/raw_data_{train_domain}_train_{year}.txt"
         train_data = load_txt_data(train_file_path)
-        test_data = transform_and_cache(
+        train_data = transform_and_cache(
             data=train_data,
-            cache_path=f"cache/{model}_paraphrased_train_{train_domain}.json",
+            cache_path=f"cache/{model}/paraphrased/train_data_{train_domain}.json",
             model_name=model,
-            api_key=key_groq
+            api_key=key_groq_paid
         )
     for test_domain in test_domains:
         year = 2019 if test_domain == "book" else 2014
@@ -143,8 +183,9 @@ if __name__ == "__main__":
        
         test_data = transform_and_cache(
             data=test_data,
-            cache_path=f"cache/{model}_paraphrased_test_{test_domain}.json",
+            cache_path=f"cache/{model}/paraphrased/test_data_{test_domain}.json",
             model_name=model,
-            api_key=key_groq
+            api_key=key_groq_paid
         ) 
+   
        

@@ -16,7 +16,7 @@ from tqdm import tqdm
 from groq import Groq 
 from transformers import AutoTokenizer, AutoModel
 from transform_data import transform_and_cache
-from utilities import get_directory, get_output_path, get_response, enforce_rate_limit, load_txt_data
+from utilities import get_directory, get_output_path, get_response, enforce_rate_limit, load_txt_data, generate_info
 
 
 # List of things to do:
@@ -31,6 +31,7 @@ def BM25_demonstration_selection(query_sentence, corpus, k):
     return np.argsort(scores)[::-1][:k]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def load_simcse_model():
     model_name = "princeton-nlp/sup-simcse-bert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -39,6 +40,7 @@ def load_simcse_model():
     return tokenizer, model
 
 def compute_embeddings(texts, tokenizer, model, batch_size=32):
+    print("Computing SimCSE embeddings...")
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
@@ -92,212 +94,196 @@ def is_prediction_misaligned(prediction_str, test_sample):
 
     return aspect not in prediction
 
+def load_existing_results(filepath, n):
+    if os.path.exists(filepath):
+        with open(filepath, 'r') as f:
+            existing = json.load(f)
+        return existing.get("results", ["{}"]*n), existing.get("inference_prompts", [])
+    return ["{}"] * n, []
+
+def load_data_and_embeddings(train_path, test_path, method, model, domain, key_groq, tokenizer=None, sim_model=None, use_paraphrase=False):
+    train_data = load_txt_data(train_path)
+    test_data = load_txt_data(test_path)
+  
+    
+    if use_paraphrase:
+        paraphrased_train_data = transform_and_cache(
+                data=train_data,
+                cache_path=f"cache/{model}/paraphrased/train_data_{domain}.json",
+                model_name=model,
+                api_key=key_groq
+            )
+    else:
+        paraphrased_train_data = None
+    
+    embeddings, paraphrased_embeddings = None, None
+    corpus = [d["text"] for d in train_data]
+
+    if method == "SimCSE":
+        assert tokenizer is not None and sim_model is not None
+        embed_path = f"cache/regular_embeddings/embeddings_{domain}.npy"
+        embeddings = np.load(embed_path) if os.path.exists(embed_path) else compute_and_cache_embeddings(corpus, tokenizer, sim_model, embed_path)
+
+        if use_paraphrase:
+            paraphrased_corpus = [d["paraphrased_text"] for d in paraphrased_train_data]
+            embed_path_extra = f"cache/{model}/embeddings/embeddings_{domain}_transformed.npy"
+            paraphrased_embeddings = np.load(embed_path_extra) if os.path.exists(embed_path_extra) else compute_and_cache_embeddings(paraphrased_corpus, tokenizer, sim_model, embed_path_extra)
+
+
+    return train_data, test_data, embeddings, paraphrased_train_data, paraphrased_embeddings
+
+def compute_and_cache_embeddings(corpus, tokenizer, model, path):
+    embeddings = compute_embeddings(corpus, tokenizer, model)
+    np.save(path, embeddings)
+    return embeddings
+
+def select_demonstration_indices(sentence, method, num_shots, train_corpus, train_embeddings, paraphrased_train_corpus, paraphrased_train_embeddings,  tokenizer=None, sim_model=None):
+    demo_indices = {}
+    if method == "SimCSE":
+        assert tokenizer is not None and sim_model is not None
+        if train_embeddings is not None:
+            demo_indices["regular"] = SimCSE_demonstration_selection(sentence, train_embeddings, tokenizer, sim_model, train_corpus, num_shots)
+        if paraphrased_train_embeddings is not None:
+            demo_indices["paraphrased"] = SimCSE_demonstration_selection(sentence, paraphrased_train_embeddings, tokenizer, sim_model, paraphrased_train_corpus, num_shots)
+    else:
+        if train_corpus:
+            demo_indices["regular"] = BM25_demonstration_selection(sentence, train_corpus, num_shots)
+        if paraphrased_train_corpus:
+            demo_indices["paraphrased"] = BM25_demonstration_selection(sentence, paraphrased_train_corpus, num_shots)
+    return demo_indices
+
+def format_demonstrations(indices, dataset, label):
+    demos = []
+    for idx in indices:
+        data = dataset[idx]
+        text = data.get("paraphrased_text", data["text"])
+        demos.append(f"Sentence: {text}\nAspects: {data['aspect']} ({data['polarity']})")
+    title = "Domain-invariant Demonstrations" if label == "paraphrased" else "Demonstrations"
+    return f"\n{title}:\n" + "\n\n".join(demos)
+
+def generate_prompt(sentence, aspects, demo_block, extra_demo_block):
+    instruction = """
+    Please perform the Aspect-Based Sentiment Classification task. Given an aspect in a sentence, assign a sentiment label from ['positive', 'negative', 'neutral'].
+    """
+    prompt = f"""{instruction}
+    {demo_block}
+    {extra_demo_block}
+    Tested sample:
+    - Original Sentence: {sentence}
+    - Aspects: {aspects}
+    \n
+    Output:
+    Generate the answer in a compact JSON format with no newlines or indentation, containing the following fields:
+    - {aspects} - string that is one of the polarities ("Positive", "Negative", "Neutral")
+
+    Always respond with a valid JSON. Do not include any extra characters, symbols, or text in or outside the JSON itself (including backticks, ", /)
+    """
+    return prompt
+
+
 
 def main():
     load_dotenv()
+    simcse_tokenizer, simcse_model = load_simcse_model()
     key_openai = os.getenv("OPENAI_API_KEY") 
     key_groq = os.getenv("GROQ_API_KEY")  
-    # (source_domain, target_domain, use_SimCSE, Model, use_transformation, shots)
-    test_info = [("laptop", "book", True, "gemma", True, 3),
-                 ("laptop", "book", True, "llama3", True, 3)]
-      
+    key_groq_paid = os.getenv("GROQ_PAID_KEY")
 
+    shot_infos = [{"num_shots": 6, "sources": ["regular"]},
+                  {"num_shots": 6, "sources": ["paraphrased"]},
+                  {"num_shots": 3, "sources": ["paraphrased", "regular"]},
+                  {"num_shots": 0, "sources": []}]
+    
 
-    for input_tuple in tqdm(test_info):
-        train_domain = input_tuple[0]
-        test_domain = input_tuple[1]
+    test_info = generate_info(
+        source_domains=["laptop"],
+        target_domains=["book"],
+        demo="SimCSE",
+        model="llama4_scout",
+        shot_infos=shot_infos,
+        indices=[3]
+    )
+   
+    
+    for (train_domain, test_domain, demo_method, model_choice, shot_info) in tqdm(test_info):
         year_train = 2019 if train_domain == "book" else 2014
         year_test = 2019 if test_domain == "book" else 2014
-       
-        train_file_path = f"data_out/{train_domain}/raw_data_{train_domain}_train_{year_train}.txt"
-        test_file_path = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year_test}.txt"
+        train_path = f"data_out/{train_domain}/raw_data_{train_domain}_train_{year_train}.txt"
+        test_path = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year_test}.txt"
 
-        use_SimCSE = input_tuple[2] # if true, use SimCSE, otherwise use BM25 for demonstration selection
-        model_choice = input_tuple[3] # options: "llama3", "llama4", "deepseek_llama", "gemma", "qwen32"
-        use_transformation = input_tuple[4]
-        num_shots = input_tuple[5]  # number of demonstrations to use
+        shot_explanation = "" if shot_info["num_shots"] == 0 else f"shots from sources: {', '.join(shot_info['sources'])}"
 
-        if num_shots == 0:
-            print(f"\n Processing target domain: {test_domain}, using model: {model_choice}, using transformation? {use_transformation}, num_shots: {num_shots}")
-        else:
-            print(f"\n Processing source_domain: {train_domain}, target domain: {test_domain}, using model: {model_choice}, using SimCSE? {use_SimCSE,} using transformation? {use_transformation}, num_shots: {num_shots}")
-        
-        subdir = get_directory(use_SimCSE=use_SimCSE, model=model_choice, use_transformation=use_transformation, num_shots=num_shots)
-        filepath = get_output_path(source_domain=train_domain, target_domain=test_domain, model=model_choice, use_transformation=use_transformation, num_shots=num_shots, subdir=subdir)
+        print(f"\nRunning {demo_method} with {shot_explanation} ({shot_info['num_shots']}) on {train_domain}→{test_domain}, model: {model_choice}")  
+
+        subdir = get_directory(demo=demo_method, model=model_choice, shot_source=shot_info["sources"], num_shots=shot_info["num_shots"])
+        filepath = get_output_path(source_domain=train_domain, target_domain=test_domain, num_shots=shot_info['num_shots'], subdir=subdir)
         os.makedirs(subdir, exist_ok=True)
-        
-        if os.path.exists(filepath):
-            with open(filepath, 'r') as f:
-                existing_data = json.load(f)
-            results = existing_data.get("results", [])
-            inference_prompts = existing_data.get("inference_prompts", [])
-        else:
-            results = []
-            inference_prompts = []
+       
+        results, inference_prompts = load_existing_results(filepath, len(load_txt_data(test_path)))
 
-        # These depend on the limit of the API
-        MAX_REQUESTS_PER_MINUTE = 30
+        include_paraphrased = "paraphrased" in shot_info["sources"]
+        include_regular = "regular" in shot_info["sources"]
+       
+      
+        train_data, test_data, train_embeddings, paraphrased_train_data, paraphrased_train_embeddings = load_data_and_embeddings(
+            train_path, test_path, demo_method, model_choice, train_domain, key_groq_paid, tokenizer=simcse_tokenizer, sim_model=simcse_model, use_paraphrase=include_paraphrased
+        )
+        with open("cache/llama4_scout/paraphrased/test_data_book.json", "r") as f:
+            test_data = json.load(f)
+
+       
+   
+       
+        openai_client = OpenAI(api_key=key_openai)
+        groq_client = Groq(api_key=key_groq)
+        groq_client_paid = Groq(api_key=key_groq_paid)
+        client = groq_client_paid
+
+        MAX_REQUESTS_PER_MINUTE = 1000
         REQUEST_WINDOW = 60  
         request_times = deque()
 
-
-        train_data = load_txt_data(train_file_path)
-        test_data = load_txt_data(test_file_path)
-       
-        # for i, (res, sample) in enumerate(zip(results, test_data)):
-        #     if is_prediction_misaligned(res, sample):
-        #         print(f"Misaligned prediction at index {i}: {res} (aspect: {sample['aspect']})")
-        # print("stop")
-        # exit()
-        
-        if use_transformation:
-            extra_train_data = transform_and_cache(
-                data=train_data,
-                cache_path=f"cache/{model_choice}_paraphrased_train_{train_domain}.json",
-                model_name=model_choice,
-                api_key=key_groq
-            )
-            train_extra_corpus = [sample["paraphrased_text"] for sample in extra_train_data]
-
-            # test_data = transform_and_cache(
-            #     data=test_data,
-            #     cache_path=f"cache/paraphrased_test_{test_domain}.json",
-            #     model_name=model_choice,
-            #     api_key=key_groq
-            # )
-
-        train_corpus = [sample["text"] for sample in train_data]
-        
-
-        if use_SimCSE:
-            tokenizer, simcse_model = load_simcse_model()
-            os.makedirs("cache", exist_ok=True)
-            embed_path = f"cache/embeddings_{train_domain}_simcse.npy"
-            if os.path.exists(embed_path):
-                print("Loading cached SimCSE embeddings...")
-                train_embeddings = np.load(embed_path)
-            else:
-                print("Computing SimCSE embeddings...")
-                train_embeddings = compute_embeddings(train_corpus, tokenizer, simcse_model)
-                np.save(embed_path, train_embeddings)
-
-            if use_transformation:
-                embed_extra_path = f"cache/embeddings_{train_domain}_transformed_simcse.npy"
-                if os.path.exists(embed_extra_path):
-                    print("Loading extra cached SimCSE embeddings...")
-                    train_extra_embeddings = np.load(embed_extra_path)
-                else:
-                    print("Computing extra SimCSE embeddings...")
-                    train_extra_embeddings = compute_embeddings(train_extra_corpus, tokenizer, simcse_model)
-                    np.save(embed_extra_path, train_extra_embeddings)
-
-        openai_client_openai = OpenAI(api_key= key_openai)
-        groq_client = Groq(api_key=key_groq)
-        client = groq_client
-
-     
-        while len(results) < len(test_data):
-            results.append("{}")
-
+    
         for i in tqdm(range(len(test_data))):
             if results[i].strip() != "{}":
                 continue
-
             sample = test_data[i]
 
-            sentence_text = sample["text"]
-            template = sample["template"]
-            aspects = sample["aspect"]
-        
-
-            if use_SimCSE:
-                top_indices = SimCSE_demonstration_selection(sentence_text, train_embeddings, tokenizer, simcse_model, train_corpus, num_shots)
-                if use_transformation:
-                    top_extra_indices = SimCSE_demonstration_selection(sentence_text, train_extra_embeddings, tokenizer, simcse_model, train_extra_corpus, num_shots)
-            else:
-                top_indices = BM25_demonstration_selection(sentence_text, train_corpus, num_shots)
-                if use_transformation:
-                    top_extra_indices = BM25_demonstration_selection(sentence_text, train_extra_corpus, num_shots)
-
-            demonstrations = []
-            for idx in top_indices:
-                demo = train_data[idx]
-                demonstrations.append(f"Sentence: {demo['template']}\nAspects: {demo['aspect']} ({demo['polarity']})")
-            demonstrations = "\n\n".join(demonstrations)
-
-            if use_transformation:
-                extra_demonstrations = []
-                for idx in top_extra_indices:
-                    demo = extra_train_data[idx]
-                    extra_demonstrations.append(f"Sentence: {demo['paraphrased_text']}\nAspects: {demo['aspect']} ({demo['polarity']})")
-                extra_demonstrations = "\n\n".join(extra_demonstrations)
-
-            if num_shots > 0:
-                demo_block = f"\nDemonstrations:\n{demonstrations}\n"
-                if use_transformation:
-                    extra_demo_block = f"\nDomain-invariant Demonstrations:\n{extra_demonstrations}\n"
-                else:
-                    extra_demo_block = ""
-            else:
-                demo_block = ""
-                extra_demo_block = ""
+            demo_indices = select_demonstration_indices(
+            sentence=sample["text"],
+            method=demo_method,
+            num_shots=shot_info["num_shots"],
+            train_corpus=[d["text"] for d in train_data] if include_regular else None,
+            train_embeddings=train_embeddings if include_regular else None,
+            paraphrased_train_corpus=[d["paraphrased_text"] for d in paraphrased_train_data] if include_paraphrased else None,
+            paraphrased_train_embeddings=paraphrased_train_embeddings if include_paraphrased else None,
+            tokenizer=simcse_tokenizer, sim_model=simcse_model
+        )
 
 
-            instruction = """
-            Please perform the Aspect-Based Sentiment Classification task. Given an aspect in a sentence, assign a sentiment label from ['positive', 'negative', 'neutral'].
-            """
-
-            base_prompt = instruction + """
-            {demo_block}
-            {extra_demo_block}
-            Tested sample:
-            - Original Sentence: {sentence}
-            - Aspects: {aspects}
-
-            Output:
-            Generate the answer in a compact JSON format with no newlines or indentation, containing the following fields:
-            - {aspects} - string that is one of the polarities ("Positive", "Negative", "Neutral")
-
-            Always respond with a valid JSON. Do not include any extra characters, symbols, or text in or outside the JSON itself (including backticks, ", /)
-            """
-
-            prompt = base_prompt.format(
-                demo_block=demo_block,
-                sentence=sentence_text,
-                aspects=aspects,
-                extra_demo_block = extra_demo_block
-            )
-
-            if i == 0:
-                print(prompt)
-
+            demo_block = format_demonstrations(demo_indices["regular"], train_data, "regular") if include_regular else ""
+            extra_demo_block = format_demonstrations(demo_indices["paraphrased"], paraphrased_train_data, "paraphrased") if include_paraphrased else ""
+            prompt = generate_prompt(sample["paraphrased_text"], sample["aspect"], demo_block, extra_demo_block)
+            
             try:
-                enforce_rate_limit(request_times=request_times, MAX_REQUESTS_PER_MINUTE=MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW=REQUEST_WINDOW)
+                enforce_rate_limit(request_times, MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW)
                 output = get_response(prompt, client, model_choice)
             except Exception as e:
                 print(f"Error generating response: {e}")
-                output = "{}"  
+                output = "{}"
 
-            
-            results[i] = output
-         
+            results[i] = output 
+
             if len(inference_prompts) < 10:
                 inference_prompts.append(prompt)
 
             with open(filepath, 'w') as f:
-                json.dump({
-                    "results": results,
-                    "inference_prompts": inference_prompts
-                }, f, indent=2)
+                json.dump({"results": results, "inference_prompts": inference_prompts}, f, indent=2)
 
         metrics = evaluation(test_data, results)
         print(json.dumps(metrics, indent=2))
         with open(filepath, 'w') as f:
-            json.dump({
-                "metrics": metrics,
-                "results": results,
-                "inference_prompts": inference_prompts
-            }, f, indent=2)
+            json.dump({"metrics": metrics, "results": results, "inference_prompts": inference_prompts}, f, indent=2)
 
 
 
