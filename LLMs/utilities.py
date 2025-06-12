@@ -5,7 +5,7 @@ import numpy as np
 
 def get_directory(demo: str, model: str, shot_info) -> str:
     num_shots = shot_info["num_shots"]
-    shot_source = shot_info["source"]
+    shot_source = shot_info["sources"]
     subdir = f"results/{model}/{demo}/{num_shots}_shot/{'_'.join(sorted(shot_source))}" 
     if num_shots == 0:
         subdir = f"results/{model}/{num_shots}_shot"
