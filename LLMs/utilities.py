@@ -145,5 +145,5 @@ def extract_first_200(input_file, output_file):
 
 
 if __name__ == "__main__":
-    extract_first_200("cache\llama4_scout\paraphrased\dependent_train_data_book.json", "cache\llama4_scout\paraphrased\dependent_train_data_book_200.json")
-    extract_first_200("cache\llama4_scout\paraphrased\independent_train_data_book.json", "cache\llama4_scout\paraphrased\independent_train_data_book_200.json")
+    extract_first_200("cache\llama4_scout\paraphrased\dependent_train_data_laptop.json", "cache\llama4_scout\paraphrased\dependent_train_data_laptop_200.json")
+    extract_first_200("cache\llama4_scout\paraphrased\independent_train_data_laptop.json", "cache\llama4_scout\paraphrased\independent_train_data_laptop_200.json")

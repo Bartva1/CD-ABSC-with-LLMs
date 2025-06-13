@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import os
 import time
+import ast
 
 
 from dotenv import load_dotenv
@@ -19,16 +20,11 @@ from transform_data import transform_and_cache
 from utilities import get_directory, get_output_path, get_response, enforce_rate_limit, load_txt_data, generate_info
 
 
-# List of things to do:
-# 1. Reproduce the code from the other papers to see if we get same results
-# 2. 
 
-
-
-def BM25_demonstration_selection(query_sentence, corpus, k):
+def BM25_demonstration_selection(query_sentence, corpus):
     bm25 = BM25Okapi([s.lower().split() for s in corpus])
     scores = bm25.get_scores( query_sentence.lower().split())
-    return np.argsort(scores)[::-1][:k]
+    return np.argsort(scores)[::-1]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -51,14 +47,13 @@ def compute_embeddings(texts, tokenizer, model, batch_size=32):
             all_embeddings.append(embeddings.cpu())
     return normalize(torch.cat(all_embeddings, dim=0).numpy())
 
-def SimCSE_demonstration_selection(query_sentence, embeddings, tokenizer, model, corpus, k):
+def SimCSE_demonstration_selection(query_sentence, embeddings, tokenizer, model):
     inputs = tokenizer([query_sentence], padding=True, truncation=True, return_tensors="pt").to(device)
     with torch.no_grad():
         query_embedding = model(**inputs, output_hidden_states=True, return_dict=True).pooler_output.cpu().numpy()
         query_embedding = normalize(query_embedding)
     similarities = cosine_similarity(query_embedding, embeddings)[0]
-    return np.argsort(similarities)[-k:][::-1]
-
+    return np.argsort(similarities)[-k:]
 
 def evaluation(test_data, results):
     y_true, y_pred = [], []
@@ -82,17 +77,6 @@ def evaluation(test_data, results):
         "macro_f1": f1_score(y_true, y_pred, average="macro", labels=labels, zero_division=0) * 100,
     }
 
-def is_prediction_misaligned(prediction_str, test_sample):
-    try:
-        prediction = json.loads(prediction_str)
-    except json.JSONDecodeError:
-        return True 
-
-    aspect = test_sample.get("aspect")
-    if not isinstance(prediction, dict):
-        return True
-
-    return aspect not in prediction
 
 def load_existing_results(filepath, n):
     if os.path.exists(filepath):
@@ -137,27 +121,55 @@ def compute_and_cache_embeddings(corpus, tokenizer, model, path):
     np.save(path, embeddings)
     return embeddings
 
-def select_demonstration_indices(sentence, method, num_shots, train_corpus, train_embeddings, paraphrased_train_corpus, paraphrased_train_embeddings,  tokenizer=None, sim_model=None):
+def top_k(sorted_indices: list[int], dataset, k:int):
+    selected = []
+    seen_pairs = set()
+    for idx in sorted_indices:
+        data = dataset[idx]
+        text = data.get("paraphrased_text", data["text"])
+        aspect = data['aspect']
+        key = (text, aspect)
+        if key not in seen_pairs:
+            seen_pairs.add(key)
+            selected.append(idx)
+        if len(selected) == k:
+            break
+    return selected
+
+def select_demonstration_indices(sentence, method, num_shots, train_data, train_embeddings, paraphrased_train_data, paraphrased_train_embeddings,  tokenizer=None, sim_model=None):
     demo_indices = {}
+    train_corpus=[d["text"] for d in train_data] if train_data is not None else None,
+    paraphrased_train_corpus=[d["paraphrased_text"] for d in paraphrased_train_data] if paraphrased_train_data is not None else None,
     if method == "SimCSE":
         assert tokenizer is not None and sim_model is not None
         if train_embeddings is not None:
-            demo_indices["regular"] = SimCSE_demonstration_selection(sentence, train_embeddings, tokenizer, sim_model, train_corpus, num_shots)
+            sorted_indices = SimCSE_demonstration_selection(sentence, train_embeddings, tokenizer, sim_model)
+            demo_indices["regular"] = top_k(sorted_indices, train_data, num_shots)
+
         if paraphrased_train_embeddings is not None:
-            demo_indices["paraphrased"] = SimCSE_demonstration_selection(sentence, paraphrased_train_embeddings, tokenizer, sim_model, paraphrased_train_corpus, num_shots)
+            sorted_indices = SimCSE_demonstration_selection(sentence, paraphrased_train_embeddings, tokenizer, sim_model)
+            demo_indices["paraphrased"] = top_k(sorted_indices, paraphrased_train_data, num_shots)
     else:
         if train_corpus:
-            demo_indices["regular"] = BM25_demonstration_selection(sentence, train_corpus, num_shots)
+            sorted_indices = BM25_demonstration_selection(sentence, train_corpus)
+            demo_indices["regular"] = top_k(sorted_indices, train_data, num_shots)
         if paraphrased_train_corpus:
-            demo_indices["paraphrased"] = BM25_demonstration_selection(sentence, paraphrased_train_corpus, num_shots)
+            sorted_indices =  BM25_demonstration_selection(sentence, paraphrased_train_corpus)
+            demo_indices["paraphrased"] = top_k(sorted_indices, paraphrased_train_data, num_shots)
     return demo_indices
 
-def format_demonstrations(indices, dataset, label):
+def format_demonstrations(indices, dataset, label, is_tuple:bool, skip_title=False):
     demos = []
     for idx in indices:
         data = dataset[idx]
-        text = data.get("paraphrased_text", data["text"])
-        demos.append(f"Sentence: {text}\nAspects: {data['aspect']} ({data['polarity']})")
+        # text = data.get("paraphrased_text", data["text"])
+        # aspect = data['aspect']
+        # polarity = data['polarity']
+        arr = data['paraphrased_text'].split(',')
+        text, aspect, polarity = arr[0][2:-1], arr[1][1:-1], arr[2][1:-2]
+        demos.append(f"Sentence: {text}\nAspects: {aspect} ({polarity})")
+    if skip_title:
+        return "\n" + "\n\n".join(demos)
     title = "Domain-invariant Demonstrations" if label == "paraphrased" else "Demonstrations"
     return f"\n{title}:\n" + "\n\n".join(demos)
 
@@ -189,8 +201,9 @@ def load_dependent_independent_sources(base_path, domain, tokenizer, model):
     with open(indep_path, "r") as f:
         indep_data = json.load(f)
 
-    dep_corpus = [d["paraphrased_text"] for d in dep_data]
-    indep_corpus = [d["paraphrased_text"] for d in indep_data]
+    dep_corpus = [d["paraphrased_text"].split(',')[0][2:-1] for d in dep_data]
+    indep_corpus = [d["paraphrased_text"].split(',')[0][2:-1] for d in indep_data]
+    
 
     dep_embed_path = os.path.join(base_path, f"../embeddings/dependent_embeddings_{domain}.npy")
     indep_embed_path = os.path.join(base_path, f"../embeddings/independent_embeddings_{domain}.npy")
@@ -224,10 +237,10 @@ def main():
     
 
     test_info = generate_info(
-        source_domains=["book"],
+        source_domains=["laptop"],
         target_domains=["book", "laptop", "restaurant"],
         demos=["SimCSE"],
-        models=["gemma"],
+        models=["llama4_scout"],
         shot_infos=shot_infos,
         indices=[3]
     )
@@ -283,9 +296,9 @@ def main():
             sentence=sample["text"],
             method=demo_method,
             num_shots=shot_info["num_shots"],
-            train_corpus=[d["text"] for d in train_data] if include_regular else None,
+            train_dataset = ,
             train_embeddings=train_embeddings if include_regular else None,
-            paraphrased_train_corpus=[d["paraphrased_text"] for d in paraphrased_train_data] if include_paraphrased else None,
+            paraphrased_train_dataset = ,
             paraphrased_train_embeddings=paraphrased_train_embeddings if include_paraphrased else None,
             tokenizer=simcse_tokenizer, sim_model=simcse_model
         )   
@@ -293,8 +306,8 @@ def main():
             dep_indices = SimCSE_demonstration_selection(sentence, dependent_embeds, simcse_tokenizer, simcse_model, [d["paraphrased_text"] for d in dependent_data], shot_info["num_shots"])
             indep_indices = SimCSE_demonstration_selection(sentence, independent_embeds, simcse_tokenizer, simcse_model, [d["paraphrased_text"] for d in independent_data], shot_info["num_shots"])
 
-            dep_block = format_demonstrations(dep_indices, dependent_data, "dependent")
-            indep_block = format_demonstrations(indep_indices, independent_data, "independent")
+            dep_block = format_demonstrations(dep_indices, dependent_data, "dependent", is_tuple=True)
+            indep_block = format_demonstrations(indep_indices, independent_data, "independent", is_tuple=True, skip_title=True)
 
             prompt = generate_prompt(sentence, aspect, dep_block, indep_block)
            

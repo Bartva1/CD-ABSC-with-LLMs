@@ -61,36 +61,42 @@ PROMPT_TEMPLATES = {
 Given a sentence from the {domain} domain, rewrite it to retain only **domain-specific** content.
 
 Your output must include:
-- A domain-specific aspect (e.g., battery for laptops, food for restaurants, plot for books)
-- A sentiment polarity (positive/negative/neutral) related to that aspect
+- A domain-dependent aspect, related to the domain: {domain}. Keep the current aspect if it is already domain-dependent.
+- A sentiment polarity (positive/negative/neutral) related to that aspect.
 
 Remove domain-independent parts.
 
 Output the transformed sentence, aspect in the new sentence, and polarity with regards to that aspect in a tuple: ("sentence","aspect","polarity").
+Make sure this aspect is in the transformed sentence.
 Do not include explanations or anything extra.
 
 {examples}
 
 Now transform the following sentence:
 {sentence}
+Current aspect: {aspect}
+
 """,
 "independent": """You are transforming sentences for few-shot learning in cross-domain aspect-based sentiment classification.
 
-Given a sentence from the {domain} domain, rewrite it to retain only **domain-independent** content.
+Given a sentence from the {domain} domain, rewrite it to retain only domain-independent content.
 
 Your output must include:
-- A general aspect (e.g., price, packaging, design, customer service)
-- A sentiment expression (positive/negative/neutral) related to that aspect
+- A domain-independent aspect, not related to the domain: {domain}.
+- If current aspect is related to the domain: {domain}, change it to be domain-independent.
+- A sentiment expression (positive/negative/neutral) related to that aspect.
 
 Remove domain-specific parts.
 
 Output the transformed sentence, aspect in the new sentence, and polarity with regards to that aspect in a tuple: ("sentence","aspect","polarity").
+Make sure this aspect is in the transformed sentence.
 Do not include explanations or anything extra.
 
 {examples}
 
 Now transform the following sentence:
 {sentence}
+Current aspect: {aspect}
 """,
 "basic": """
     Instruction:
@@ -252,6 +258,7 @@ def transform_and_cache(domain, prompt_version, data, cache_path, model_name, ap
                         
             with open(cache_path, "w") as f:
                     json.dump(data, f, indent=2)
+       
     
     return data   
 
@@ -265,32 +272,35 @@ if __name__ == "__main__":
     key_groq_paid = os.getenv("GROQ_PAID_KEY")
 
     model = "llama4_scout"
-    train_domains = ["book"]
+    train_domains = ["laptop"]
     test_domains = []
-    prompt_version = "independent"
-    for train_domain in train_domains:
-        year = 2019 if train_domain == "book" else 2014
-        train_file_path = f"data_out/{train_domain}/raw_data_{train_domain}_train_{year}.txt"
-        train_data = load_txt_data(train_file_path)
-        train_data = transform_and_cache(
-            domain=train_domain,
-            data=train_data,
-            prompt_version=prompt_version,
-            cache_path=f"cache/{model}/paraphrased/{prompt_version}_train_data_{train_domain}.json",
-            model_name=model,
-            api_key=key_groq_paid
-        )
-    for test_domain in test_domains:
-        year = 2019 if test_domain == "book" else 2014
-        test_file_path = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year}.txt"
-        test_data = load_txt_data(test_file_path)
-       
-        test_data = transform_and_cache(
-            domain=train_domain,
-            data=test_data,
-            cache_path=f"cache/{model}/paraphrased/test_data_{test_domain}.json",
-            model_name=model,
-            api_key=key_groq_paid
-        ) 
+    prompt_versions = ["dependent", "independent"]
+    for prompt_version in prompt_versions:
+        for train_domain in train_domains:
+            year = 2019 if train_domain == "book" else 2014
+            train_file_path = f"data_out/{train_domain}/raw_data_{train_domain}_train_{year}.txt"
+            train_data = load_txt_data(train_file_path)
+            train_data = transform_and_cache(
+                domain=train_domain,
+                data=train_data,
+                prompt_version=prompt_version,
+                cache_path=f"cache/{model}/paraphrased/{prompt_version}_train_data_{train_domain}.json",
+                model_name=model,
+                api_key=key_groq_paid
+            )
+    for prompt_version in prompt_versions:
+        for test_domain in test_domains:
+            year = 2019 if test_domain == "book" else 2014
+            test_file_path = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year}.txt"
+            test_data = load_txt_data(test_file_path)
+        
+            test_data = transform_and_cache(
+                domain=train_domain,
+                data=test_data,
+                prompt_version=prompt_version
+                cache_path=f"cache/{model}/paraphrased/test_data_{test_domain}.json",
+                model_name=model,
+                api_key=key_groq_paid
+            ) 
    
        
