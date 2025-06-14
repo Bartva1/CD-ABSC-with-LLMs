@@ -297,7 +297,7 @@ if __name__ == "__main__":
             test_data = transform_and_cache(
                 domain=train_domain,
                 data=test_data,
-                prompt_version=prompt_version
+                prompt_version=prompt_version,
                 cache_path=f"cache/{model}/paraphrased/test_data_{test_domain}.json",
                 model_name=model,
                 api_key=key_groq_paid
