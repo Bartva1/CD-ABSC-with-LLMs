@@ -130,8 +130,14 @@ def top_k(sorted_indices: list[int], dataset: list, k: int, sources:str):
     for idx in sorted_indices:
         data = dataset[idx]
         if "dependent" in sources or "independent" in sources:
-            arr = data['paraphrased_text'].split(',')
-            text, aspect = arr[0].strip()[2:-1], arr[1].strip()[1:-1]
+            try:
+                arr = data['paraphrased_text'].split(',')
+                text, aspect = arr[0].strip()[2:-1], arr[1].strip()[1:-1]
+            except Exception as e:
+                print(f"Error during parsing (in)dependent sentence: {e}")
+                print(f"Sentence which failed to parse: {arr}")
+                exit()
+
         else:
             text, aspect = data.get("paraphrased_text", data["text"]), data['aspect']
      
@@ -169,9 +175,14 @@ def format_demonstrations(indices: list[int], dataset, label, is_tuple:bool, ski
     for idx in indices:
         data = dataset[idx]
         if is_tuple:
-            arr = data['paraphrased_text'].split(',')
-            print(arr)
-            text, aspect, polarity = arr[0].strip()[2:-1], arr[1].strip()[1:-1], arr[2].strip()[1:-2]
+            try:
+                arr = data['paraphrased_text'].split(',')
+                # print(arr)
+                text, aspect, polarity = arr[0].strip()[2:-1], arr[1].strip()[1:-1], arr[2].strip()[1:-2]
+            except Exception as e:
+                print(f"Error during parsing (in)dependent sentence: {e}")
+                print(f"Sentence which failed to parse: {arr}")
+                exit()
         else:
             text, aspect, polarity = data.get("paraphrased_text", data["text"]), data['aspect'], data['polarity']
         
@@ -241,6 +252,7 @@ def main():
     key_openai = os.getenv("OPENAI_API_KEY") 
     key_groq = os.getenv("GROQ_API_KEY")  
     key_groq_paid = os.getenv("GROQ_PAID_KEY")
+    key_gemini = os.getenv("GEMINI_KEY")
 
     shot_infos = [{"num_shots": 6, "sources": ["regular"]},
                   {"num_shots": 6, "sources": ["paraphrased"]},
@@ -248,15 +260,14 @@ def main():
                   {"num_shots": 3, "sources": ["independent", "dependent"]},
                   {"num_shots": 0, "sources": []}]
     
-
     test_info = generate_info(
-        source_domains=["book", "laptop", "restaurant"],
-        target_domains=["book", "laptop", "restaurant"],
-        demos=["SimCSE"],
-        models=["llama4_scout"],
-        shot_infos=shot_infos,
-        indices=[3]
-    )
+            source_domains=["restaurant"],
+            target_domains=["laptop" ],
+            demos=["SimCSE"],
+            models=["llama4_scout"],
+            shot_infos=shot_infos,
+            indices=[0,3]
+        )
    
     
     for (train_domain, test_domain, demo_method, model_choice, shot_info) in tqdm(test_info):
@@ -286,9 +297,13 @@ def main():
         ) 
 
         # creating transformed data for domain-dependent and domain-independent
-        dependent_train_data, independent_train_data, dependent_train_embeddings, independent_train_embeddings = load_dependent_independent_sources(
-            train_data, demo_method, model_choice, train_domain, key_groq_paid, simcse_tokenizer, simcse_model
+        if "dependent" in shot_info["sources"]:
+            dependent_train_data, independent_train_data, dependent_train_embeddings, independent_train_embeddings = load_dependent_independent_sources(
+                train_data, demo_method, model_choice, train_domain, key_groq_paid, simcse_tokenizer, simcse_model
             )
+        else:
+             dependent_train_data, independent_train_data, dependent_train_embeddings, independent_train_embeddings = None, None, None, None
+
 
        
         openai_client = OpenAI(api_key=key_openai)
@@ -297,7 +312,7 @@ def main():
         client = groq_client_paid
 
         MAX_REQUESTS_PER_MINUTE = 1000
-        REQUEST_WINDOW = 60  
+        REQUEST_WINDOW = 60 
         request_times = deque()
 
         datasets = {
@@ -313,6 +328,8 @@ def main():
             "dependent": dependent_train_embeddings,
             "independent": independent_train_embeddings
         }
+        while len(results) < len(test_data):
+            results.append("{}")
         for i in tqdm(range(len(test_data))):
             if results[i].strip() != "{}":
                 continue
@@ -359,7 +376,10 @@ def main():
         
             try:
                 enforce_rate_limit(request_times, MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW)
-                output = get_response(prompt, client, model_choice)
+                if model_choice == 'gemma3' or model_choice == 'gemini_flash':
+                    output = get_response(prompt, client, model_choice, key_gemini)
+                else: 
+                    output = get_response(prompt, client, model_choice)
             except Exception as e:
                 print(f"Error generating response: {e}")
                 output = "{}"
@@ -375,7 +395,7 @@ def main():
         metrics = evaluation(test_data, results)
         print(json.dumps(metrics, indent=2))
         with open(filepath, 'w') as f:
-            json.dump({"metrics": metrics, "results": results, "inference_prompts": inference_prompts}, f, indent=2)
+            json.dump({"metrics": metrics, "results": results}, f, indent=2)
 
 
 

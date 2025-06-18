@@ -2,11 +2,13 @@ import os
 import time
 import json
 import numpy as np
+import re
+import google.generativeai as genai
 
 def get_directory(demo: str, model: str, shot_info) -> str:
     num_shots = shot_info["num_shots"]
     shot_source = shot_info["sources"]
-    subdir = f"results/{model}/{demo}/{num_shots}_shot/{'_'.join(sorted(shot_source))}" 
+    subdir = f"results/{model}/{demo}/{num_shots}_shot/{'_'.join(sorted(shot_source))}2" 
     if num_shots == 0:
         subdir = f"results/{model}/{num_shots}_shot"
     return subdir
@@ -19,16 +21,26 @@ def get_output_path(source_domain: str, target_domain: str, num_shots: int, subd
 
 
 
-def get_response(prompt, client, model):
+def get_response(prompt, client, model, key_gemini=None):
     model_map = {
         "gpt-4o": "gpt-4o-mini",
         "llama3": "llama3-70b-8192",
         "llama4_scout": "meta-llama/llama-4-scout-17b-16e-instruct",
         "deepseek_llama": "deepseek-r1-distill-llama-70b",
         "gemma": "gemma2-9b-it",
-        "qwen32": "qwen-qwq-32b",
+        "gemma3": "gemma-3-27b-it",
+        "gemini_flash": "gemini-2.5-flash-preview-05-20",
+        "qwen32": "qwen/qwen3-32b",
         "llama4_mav": "meta-llama/llama-4-maverick-17b-128e-instruct"
     }
+    
+    if model == 'gemma3' or model == 'gemini_flash':
+        model = model_map.get(model, model)
+        genai.configure(api_key=key_gemini)
+        gemini = genai.GenerativeModel(model)
+        response = gemini.generate_content(prompt)
+        return response.text
+    
     model = model_map.get(model, model)
     messages = [{"role": "user", "content": prompt}]
     output = client.chat.completions.create(model=model, messages=messages, temperature=0)
@@ -135,7 +147,6 @@ def generate_info(source_domains: list[str], target_domains: list[str], demos: l
 
 
 def extract_first_200(input_file, output_file):
-    
     with open(input_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -144,6 +155,53 @@ def extract_first_200(input_file, output_file):
         json.dump(first_200, f, indent=2, ensure_ascii=False)
 
 
+def fix_paraphrased_text(entry):
+    paraphrased = entry.get("paraphrased_text", "").strip()
+
+    # Case 1: Extract all valid tuples and return the last one
+    matches = re.findall(r'\(".*?",".*?",".*?"\)', paraphrased)
+    if matches:
+        return matches[-1]
+
+    # Case 2 or 3: Split by lines and analyze
+    lines = [line.strip().strip(',') for line in paraphrased.splitlines() if line.strip()]
+
+    if len(lines) == 3:
+        # Case 2: Three-line format
+        sentence, aspect, polarity = lines
+        return f"(\"{sentence}\",\"{aspect}\",\"{polarity.lower()}\")"
+    
+    elif len(lines) == 2:
+        # Case 3: aspect and polarity on same line, separated by comma
+        sentence = lines[0]
+        if ',' in lines[1]:
+            aspect_part, polarity_part = lines[1].split(',', 1)
+            aspect = aspect_part.strip()
+            polarity = polarity_part.strip().lower()
+            return f"(\"{sentence}\",\"{aspect}\",\"{polarity}\")"
+
+    # Case 4 or fallback: Do nothing
+    return paraphrased
+
+
+def process_json(data):
+    for entry in data:
+        entry["paraphrased_text"] = fix_paraphrased_text(entry)
+    return data
+
+
 if __name__ == "__main__":
-    extract_first_200("cache\llama4_scout\paraphrased\dependent_train_data_laptop.json", "cache\llama4_scout\paraphrased\dependent_train_data_laptop_200.json")
-    extract_first_200("cache\llama4_scout\paraphrased\independent_train_data_laptop.json", "cache\llama4_scout\paraphrased\independent_train_data_laptop_200.json")
+    domains = ["laptop", "book", "restaurant"]
+    for domain in domains:
+        with open(f"cache/gemma/dependent/train_data_{domain}.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        fixed_data = process_json(data)
+        with open(f"cache/gemma/dependent/train_data_{domain}.json", "w", encoding="utf-8") as f:
+            json.dump(fixed_data, f, indent=2, ensure_ascii=False)
+
+
+        with open(f"cache/gemma/independent/train_data_{domain}.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        fixed_data = process_json(data)
+        with open(f"cache/gemma/independent/train_data_{domain}.json", "w", encoding="utf-8") as f:
+            json.dump(fixed_data, f, indent=2, ensure_ascii=False)

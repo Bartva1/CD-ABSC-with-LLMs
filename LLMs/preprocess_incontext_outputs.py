@@ -1,8 +1,8 @@
 import json
 import re
 
-input_path = "results/deepseek_llama/0_shot/results_book.json"
-output_path = "results/deepseek_llama/0_shot/processed_results_book.json"
+input_path = "results/qwen32/SimCSE/6_shot/regular/results_restaurant_laptop.json"
+output_path = "results/qwen32/SimCSE/6_shot/regular/processed_results_restaurant_laptop.json"
 
 with open(input_path, "r", encoding="utf-8") as f:
     data = json.load(f)
@@ -37,8 +37,7 @@ def process_json(input_path, output_path):
 
 
     new_data = {
-        "results": cleaned_results,
-        "inference_prompts": data["inference_prompts"]
+        "results": cleaned_results
     }
 
     with open(output_path, "w", encoding="utf-8") as f:

@@ -149,8 +149,8 @@ def evaluate_multiple_predictions(txt_path, json_paths, key_info):
                 y_true.append(normalize(sample["polarity"]).capitalize())
                 y_pred.append(normalize(predicted_label).capitalize())
 
-        model, train_domain, transformation_text = key_info[idx]
-        model_id = f"{model}_{train_domain}_{transformation_text}"
+        model, train_domain, demo_method, transformation_text = key_info[idx]
+        model_id = f"{model}_{train_domain}_{demo_method}_{transformation_text}"
 
         preds = [
             pred.get(normalize(sample["aspect"]), "").capitalize()
@@ -209,43 +209,77 @@ def evaluate_multiple_predictions(txt_path, json_paths, key_info):
     base_df["num_wrong"] = base_df.apply(
         lambda row: sum(row[col] != row["true_label"] for col in model_cols), axis=1
     )
-    plot_confusion_heatmap(base_df, model_cols)
+    # plot_confusion_heatmap(base_df, model_cols)
 
     return base_df, model_metrics
 
 
-
 def print_metric_tables(all_metrics):
     metric_names = ["accuracy", "macro_f1", "macro_precision", "macro_recall"]
+    header_fmt = "{:<50}" + "".join(["{:>15}" for _ in metric_names])
+    row_fmt = "{:<50}" + "".join(["{:>15.2f}" for _ in metric_names])
 
-    for (source, target), models in sorted(all_metrics.items()):
-        print(f"\n=== Evaluation: Target = {target} ===")
-        header = f"{'Model':<40}" + "".join(f"{metric:<15}" for metric in metric_names)
-        print(header)
-        print("-" * len(header))
-        for model_id, metrics in models.items():
-            row = f"{model_id:<40}"
-            for metric in metric_names:
-                val = metrics.get(metric, 0.0)
-                row += f"{val:>14.1f} "
-            print(row)
-        print()
+    grouped = defaultdict(lambda: defaultdict(list)) 
+
+
+    for (source, test_domain), model_dict in all_metrics.items():
+        for model_id, metrics in model_dict.items():
+            parts = model_id.split("_")
+            model = parts[0]
+            train_domain = parts[1]
+            demo_method = parts[2]
+            shot_info = "_".join(parts[3:])
+            grouped[test_domain][model].append((train_domain,demo_method, shot_info, model_id, metrics))
+
+    # Print results
+    for test_domain in sorted(grouped):
+        print(f"\n{'=' * 80}")
+        print(f"Evaluation Results for Test Domain: {test_domain.upper()}")
+        print(f"{'=' * 80}")
+
+        for model in sorted(grouped[test_domain]):
+            print(f"\n--- Model: {model} ---")
+            rows = grouped[test_domain][model]
+
+            print(header_fmt.format("Model ID", *metric_names))
+            print("-" * (60 + 15 * len(metric_names)))
+
+            for train_domain, demo_method, shot_info, model_id, metrics in sorted(rows):
+                label = f"({train_domain}, {demo_method}, {shot_info})"
+                values = [metrics.get(m, 0.0) for m in metric_names]
+                print(row_fmt.format(label, *values))
+
+            class_labels = LABELS 
+            print("\nPer-Class Accuracy:")
+            header_fmt_class = "{:<50}" + "".join(["{:>10}" for _ in class_labels])
+            row_fmt_class = "{:<50}" + "".join(["{:>10.2f}" for _ in class_labels])
+
+            print(header_fmt_class.format("Model ID", *class_labels))
+            print("-" * (60 + 15 * len(class_labels)))
+
+            for train_domain, demo_method, shot_info, model_id, metrics in sorted(rows):
+                label = f"({train_domain}, {demo_method}, {shot_info})"
+                acc_values = [metrics.get("per_class_accuracy", {}).get(label, 0.0) for label in class_labels]
+                print(row_fmt_class.format(label, *acc_values))
 
 
 if __name__ == "__main__":
     shot_infos = [{"num_shots": 6, "sources": ["regular"]},
                   {"num_shots": 6, "sources": ["paraphrased"]},
                   {"num_shots": 3, "sources": ["paraphrased", "regular"]},
+                  {"num_shots": 3, "sources": ["independent", "dependent"]},
                   {"num_shots": 0, "sources": []}]
+    
 
     test_info = generate_info(
-        source_domains=["book", "laptop", "restaurant"],
-        target_domains=["book", "laptop", "restaurant"],
-        demos=["bm25", "SimCSE"],
-        models=["gemma", "llama4_scout"],
-        shot_infos=shot_infos,
-        indices=[0, 1, 2]
-    )
+            source_domains=["book", "restaurant"],
+            target_domains=["laptop", ],
+            demos=["SimCSE"],
+            models=["gemma", "llama4_scout"],
+            shot_infos=shot_infos,
+            indices=[0,3]
+        )
+   
 
     domain_to_eval_data = defaultdict(lambda: {"ground_truth": "", "json_paths": [], "key_info": []})
 
@@ -257,7 +291,10 @@ if __name__ == "__main__":
 
         domain_to_eval_data[test_domain]["ground_truth"] = path_ground_truth
         domain_to_eval_data[test_domain]["json_paths"].append(path_pred)
-        domain_to_eval_data[test_domain]["key_info"].append((model, train_domain, "_".join(shot_info["sources"])))
+        domain_to_eval_data[test_domain]["key_info"].append(
+        (model, train_domain, demo_method, "_".join(shot_info["sources"]))
+        )
+
 
     all_metrics = {}
 

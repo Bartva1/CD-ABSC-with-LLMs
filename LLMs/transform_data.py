@@ -58,7 +58,7 @@ DOMAIN_EXAMPLES = {
 PROMPT_TEMPLATES = {
     "dependent": """You are transforming sentences for few-shot learning in cross-domain aspect-based sentiment classification.
 
-Given a sentence from the {domain} domain, rewrite it to retain only **domain-specific** content.
+Given a sentence from the {domain} domain, rewrite it to retain only domain-specific content.
 
 Your output must include:
 - A domain-dependent aspect, related to the domain: {domain}. Keep the current aspect if it is already domain-dependent.
@@ -191,7 +191,7 @@ def get_response_with_correction(prompt, client, model, aspect, max_retries, i):
     
     return response
 
-def build_prompt(domain: str, transformation_type: str, sentence: str, aspect) -> str:
+def build_prompt(domain: str, transformation_type: str, sentence: str, aspect:str) -> str:
     assert domain in DOMAIN_EXAMPLES, f"Unknown domain: {domain}"
     assert transformation_type in ["dependent", "independent", "basic"], "transformation_type must be 'dependent', 'independent', or 'basic'"
     
@@ -266,7 +266,6 @@ def transform_and_cache(domain, prompt_version, data, cache_path, model_name, ap
 
 # if you want to transform a seperate path without doing the classification, run the main function in this file
 if __name__ == "__main__":
-    
     load_dotenv() 
     key_groq = os.getenv("GROQ_API_KEY")
     key_groq_paid = os.getenv("GROQ_PAID_KEY")
