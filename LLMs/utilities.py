@@ -129,30 +129,49 @@ def remove_entries(file_path: str, mask: list[int]) -> None:
         print(f"Removed {len(mask)} entries from {file_path}")
 
 
+def generate_info(
+    source_domains: list[str],
+    target_domains: list[str],
+    demos: list[str],
+    models: list[str],
+    shot_infos: list[dict],
+    indices: list[int]
+) -> list[tuple]:
+    """
+    Generates a list of information tuples based on the specified domains, models, 
+    demos, and shot settings.
 
+    Each tuple has the form:
+    (source_domain, target_domain, demo_or_simcse, model, shot_info)
 
-def generate_info(source_domains: list[str], target_domains: list[str], demos: list[str], models: list[str], shot_infos: list[dict], indices: list[int]):
+    If shot_info indicates zero shots, SimCSE is used and source == target.
+    Otherwise, demos are used with different source and target domains.
+    """
     info = []
+
+    # Handle zero-shot SimCSE cases
+    for i in indices:
+        shot_info = shot_infos[i]
+        if shot_info['num_shots'] == 0:
+            for model in models:
+                for target in target_domains:
+                    info.append((target, target, "SimCSE", model, shot_info))
+
+    # Handle non-zero-shot demo cases
     for model in models:
-        for demo in demos: 
-            for source_domain in source_domains:
-                for target_domain in target_domains:
-                    if target_domain == source_domain:
+        for demo in demos:
+            for source in source_domains:
+                for target in target_domains:
+                    if source == target:
                         continue
-                    for idx in indices:
-                        shot_info = shot_infos[idx]
-                        info.append((source_domain, target_domain, demo, model, shot_info))
+                    for i in indices:
+                        shot_info = shot_infos[i]
+                        if shot_info['num_shots'] == 0:
+                            continue
+                        info.append((source, target, demo, model, shot_info))
+
     return info
 
-
-
-def extract_first_200(input_file, output_file):
-    with open(input_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-
-    first_200 = data[:200]
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(first_200, f, indent=2, ensure_ascii=False)
 
 
 def fix_paraphrased_text(entry):

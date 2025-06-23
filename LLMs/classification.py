@@ -261,12 +261,12 @@ def main():
                   {"num_shots": 0, "sources": []}]
     
     test_info = generate_info(
-            source_domains=["restaurant"],
-            target_domains=["laptop" ],
+            source_domains=["laptop","restaurant", "book"],
+            target_domains=["laptop","restaurant", "book"],
             demos=["SimCSE"],
-            models=["llama4_scout"],
+            models=["llama4_scout", "gemma"],
             shot_infos=shot_infos,
-            indices=[0,3]
+            indices=[0,1,2,3,4]
         )
    
     
@@ -383,7 +383,7 @@ def main():
             except Exception as e:
                 print(f"Error generating response: {e}")
                 output = "{}"
-
+            7
             results[i] = output 
 
             if len(inference_prompts) < 10:
