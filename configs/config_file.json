@@ -1,0 +1,8 @@
+{
+  "source_domains": ["laptop", "restaurant", "book"],
+  "target_domains": ["laptop", "restaurant", "book"],
+  "demos": ["SimCSE"],
+  "models": ["llama4_scout", "gemma"],
+  "indices": [0, 1, 2, 3, 4],
+  "shot_infos_path": "configs/shot_infos.json"
+}

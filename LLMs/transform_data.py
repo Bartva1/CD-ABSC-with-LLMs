@@ -267,8 +267,7 @@ def transform_and_cache(domain, prompt_version, data, cache_path, model_name, ap
 # if you want to transform a seperate path without doing the classification, run the main function in this file
 if __name__ == "__main__":
     load_dotenv() 
-    key_groq = os.getenv("GROQ_API_KEY")
-    key_groq_paid = os.getenv("GROQ_PAID_KEY")
+    key_groq = os.getenv("GROQ_KEY")
 
     model = "llama4_scout"
     train_domains = ["laptop"]
@@ -285,7 +284,7 @@ if __name__ == "__main__":
                 prompt_version=prompt_version,
                 cache_path=f"cache/{model}/paraphrased/{prompt_version}_train_data_{train_domain}.json",
                 model_name=model,
-                api_key=key_groq_paid
+                api_key=key_groq
             )
     for prompt_version in prompt_versions:
         for test_domain in test_domains:
@@ -299,7 +298,7 @@ if __name__ == "__main__":
                 prompt_version=prompt_version,
                 cache_path=f"cache/{model}/paraphrased/test_data_{test_domain}.json",
                 model_name=model,
-                api_key=key_groq_paid
+                api_key=key_groq
             ) 
    
        

@@ -4,6 +4,9 @@ import json
 import numpy as np
 import re
 import google.generativeai as genai
+import argparse
+import sys
+
 
 def get_directory(demo: str, model: str, shot_info) -> str:
     num_shots = shot_info["num_shots"]
@@ -79,6 +82,7 @@ def load_txt_data(path: str):
             "polarity": polarity
         })
     return samples
+
 
 def load_json_data(path: str) -> list[dict[str,str]]:
     samples = []
@@ -208,8 +212,87 @@ def process_json(data):
         entry["paraphrased_text"] = fix_paraphrased_text(entry)
     return data
 
+def default_experiment_args():
+    source_domains = ["laptop", "restaurant", "book"]
+    target_domains = ["laptop", "restaurant", "book"]
+    demos = ["SimCSE"]
+    models = ["llama4_scout", "gemma"]
+    indices = [0, 1, 2, 3, 4]
+    shot_infos = [
+        {"num_shots": 6, "sources": ["regular"]},
+        {"num_shots": 6, "sources": ["paraphrased"]},
+        {"num_shots": 3, "sources": ["paraphrased", "regular"]},
+        {"num_shots": 3, "sources": ["independent", "dependent"]},
+        {"num_shots": 0, "sources": []}
+    ]
+    return source_domains, target_domains, demos, models, shot_infos, indices
+
+def parse_experiment_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, help="Path to a JSON config file")
+
+    # Optional overrides, in case you want to change a specific argument
+    # Comma-separated input expected
+    parser.add_argument("--source_domains", type=str, help="e.g., 'restaurant,laptop'")
+    parser.add_argument("--target_domains", type=str, help="e.g., 'restaurant,book'")
+    parser.add_argument("--demos", type=str, help="e.g., 'SimCSE'")
+    parser.add_argument("--models", type=str, help="e.g., 'gemma,llama4_scout'")
+    parser.add_argument("--indices", type=str, help="e.g., '0,1,2'")
+    parser.add_argument("--shot_infos_path", type=str)
+
+    args = parser.parse_args()
+
+    if len (sys.argv) == 1:
+        print("No arguments passed, running all experiments")
+        return default_experiment_args()
+
+    config = {}
+    if args.config:
+        if not os.path.isfile(args.config):
+            raise FileNotFoundError(f"Config file {args.config} not found.")
+        with open(args.config, "r") as f:
+            config = json.load(f)
+ 
+        
+
+    def get(key, default=None, split=True, cast=str):
+        val = getattr(args, key)
+        if val is not None:
+            if split:
+                return [cast(x.strip()) for x in val.split(",")]
+            else:
+                return cast(val)
+        
+        if key in config:
+            conf_val = config[key]
+            if isinstance(conf_val, list):
+                return [cast(x) for x in conf_val]
+            if split:
+                return [cast(x.strip()) for x in conf_val.split(",")]
+            else:
+                return cast(conf_val)
+        
+        return default
+
+    source_domains = get("source_domains", [], cast=str)
+    target_domains = get("target_domains", [], cast=str)
+    demos = get("demos", ["SimCSE"], cast=str)
+    models = get("models", [], cast=str)
+    indices = get("indices", [], cast=int)
+
+    shot_infos_path = get("shot_infos_path", default=None, split=False, cast=str)
+    if not shot_infos_path:
+        raise ValueError("Missing required `shot_infos_path`.")
+    if not os.path.isfile(shot_infos_path):
+        raise FileNotFoundError(f"Shot info file {shot_infos_path} not found.")
+
+    with open(shot_infos_path, "r") as f:
+        shot_infos = json.load(f)
+
+    return source_domains, target_domains, demos, models, shot_infos, indices
 
 if __name__ == "__main__":
+    # example usage if the llms misbehave with the output for the transformations
     domains = ["laptop", "book", "restaurant"]
     for domain in domains:
         with open(f"cache/gemma/dependent/train_data_{domain}.json", "r", encoding="utf-8") as f:

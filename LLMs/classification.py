@@ -17,7 +17,7 @@ from tqdm import tqdm
 from groq import Groq 
 from transformers import AutoTokenizer, AutoModel
 from transform_data import transform_and_cache
-from utilities import get_directory, get_output_path, get_response, enforce_rate_limit, load_txt_data, generate_info
+from utilities import get_directory, get_output_path, get_response, enforce_rate_limit, load_txt_data, generate_info, parse_experiment_args
 
 
 
@@ -249,24 +249,19 @@ def load_dependent_independent_sources(train_data, demo_method, model, domain, k
 def main():
     load_dotenv()
     simcse_tokenizer, simcse_model = load_simcse_model()
-    key_openai = os.getenv("OPENAI_API_KEY") 
-    key_groq = os.getenv("GROQ_API_KEY")  
-    key_groq_paid = os.getenv("GROQ_PAID_KEY")
+    key_openai = os.getenv("OPENAI_KEY") 
+    key_groq = os.getenv("GROQ_KEY")
     key_gemini = os.getenv("GEMINI_KEY")
 
-    shot_infos = [{"num_shots": 6, "sources": ["regular"]},
-                  {"num_shots": 6, "sources": ["paraphrased"]},
-                  {"num_shots": 3, "sources": ["paraphrased", "regular"]},
-                  {"num_shots": 3, "sources": ["independent", "dependent"]},
-                  {"num_shots": 0, "sources": []}]
+    source_domains, target_domains, demos, models, shot_infos, indices = parse_experiment_args()
     
     test_info = generate_info(
-            source_domains=["laptop","restaurant", "book"],
-            target_domains=["laptop","restaurant", "book"],
-            demos=["SimCSE"],
-            models=["llama4_scout", "gemma"],
+            source_domains=source_domains,
+            target_domains=target_domains,
+            demos=demos,
+            models=models,
             shot_infos=shot_infos,
-            indices=[0,1,2,3,4]
+            indices=indices
         )
    
     
@@ -293,13 +288,13 @@ def main():
 
         # loading/creating train data, test data, and paraphrased version + embeddings
         train_data, test_data, train_embeddings, paraphrased_train_data, paraphrased_train_embeddings = load_data_and_embeddings(
-            train_path, test_path, demo_method, model_choice, train_domain, key_groq_paid, simcse_tokenizer, simcse_model, include_paraphrased
+            train_path, test_path, demo_method, model_choice, train_domain, key_groq, simcse_tokenizer, simcse_model, include_paraphrased
         ) 
 
         # creating transformed data for domain-dependent and domain-independent
         if "dependent" in shot_info["sources"]:
             dependent_train_data, independent_train_data, dependent_train_embeddings, independent_train_embeddings = load_dependent_independent_sources(
-                train_data, demo_method, model_choice, train_domain, key_groq_paid, simcse_tokenizer, simcse_model
+                train_data, demo_method, model_choice, train_domain, key_groq, simcse_tokenizer, simcse_model
             )
         else:
              dependent_train_data, independent_train_data, dependent_train_embeddings, independent_train_embeddings = None, None, None, None
@@ -308,8 +303,7 @@ def main():
        
         openai_client = OpenAI(api_key=key_openai)
         groq_client = Groq(api_key=key_groq)
-        groq_client_paid = Groq(api_key=key_groq_paid)
-        client = groq_client_paid
+        client = groq_client
 
         MAX_REQUESTS_PER_MINUTE = 1000
         REQUEST_WINDOW = 60 
@@ -347,29 +341,27 @@ def main():
             sources=shot_info['sources']
             )   
 
-            # might opt to refactor this, as it is a bit lengthy
+            FORMAT_CONFIG = {
+                "regular":      {"data": train_data, "is_tuple": False, "skip_title": False},
+                "paraphrased":  {"data": paraphrased_train_data, "is_tuple": False, "skip_title": False},
+                "dependent":    {"data": dependent_train_data, "is_tuple": True,  "skip_title": False},
+                "independent":  {"data": independent_train_data, "is_tuple": True,  "skip_title": True}
+            }
+
             demo_block_parts = []
 
-            if "regular" in shot_info["sources"] and "regular" in demo_indices:
-                demo_block_parts.append(
-                    format_demonstrations(demo_indices["regular"], train_data, "regular", is_tuple=False)
-                )
-
-            if "paraphrased" in shot_info["sources"] and "paraphrased" in demo_indices:
-                demo_block_parts.append(
-                    format_demonstrations(demo_indices["paraphrased"], paraphrased_train_data, "paraphrased", is_tuple=False)
-                )
-
-            if "dependent" in shot_info["sources"] and "dependent" in demo_indices:
-                demo_block_parts.append(
-                    format_demonstrations(demo_indices["dependent"], dependent_train_data, "dependent", is_tuple=True)
-                )
-
-            if "independent" in shot_info["sources"] and "independent" in demo_indices:
-                demo_block_parts.append(
-                    format_demonstrations(demo_indices["independent"], independent_train_data, "independent", is_tuple=True, skip_title=True)
-                )
-
+            for source_type in shot_info["sources"]:
+                if source_type in demo_indices and source_type in FORMAT_CONFIG:
+                    config = FORMAT_CONFIG[source_type]
+                    demo_block_parts.append(
+                        format_demonstrations(
+                            demo_indices[source_type],
+                            config["data"],
+                            source_type,
+                            is_tuple=config["is_tuple"],
+                            skip_title=config["skip_title"]
+                        )
+                    )
             demo_block_combined = "\n".join(demo_block_parts)
             prompt = generate_prompt(sentence, aspect, demo_block_combined)
            

@@ -1,0 +1,27 @@
+[
+  {
+    "name": "raw_6shot",
+    "num_shots": 6,
+    "sources": ["regular"]
+  },
+  {
+    "name": "AP_DI_6shot",
+    "num_shots": 6,
+    "sources": ["paraphrased"]
+  },
+  {
+    "name": "hybrid_AP_DI_6shot",
+    "num_shots": 3,
+    "sources": ["regular", "paraphrased"]
+  },
+  {
+    "name": "hybrid_AV_6shot",
+    "num_shots": 3,
+    "sources": ["independent", "dependent"]
+  },
+  {
+    "name": "zero_shot",
+    "num_shots": 0,
+    "sources": []
+  }
+]

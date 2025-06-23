@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utilities import load_txt_data, get_directory, get_output_path, generate_info
+from utilities import load_txt_data, get_directory, get_output_path, generate_info, parse_experiment_args
 
 LABELS = ["Positive", "Negative", "Neutral"]
 
@@ -230,22 +230,17 @@ def print_metric_tables(all_metrics):
 
 
 if __name__ == "__main__":
-    shot_infos = [{"num_shots": 6, "sources": ["regular"]},
-                  {"num_shots": 6, "sources": ["paraphrased"]},
-                  {"num_shots": 3, "sources": ["paraphrased", "regular"]},
-                  {"num_shots": 3, "sources": ["independent", "dependent"]},
-                  {"num_shots": 0, "sources": []}]
     
-
+    source_domains, target_domains, demos, models, shot_infos, indices = parse_experiment_args()
+    
     test_info = generate_info(
-            source_domains=["laptop", "restaurant", "book"],
-            target_domains=["laptop","restaurant", "book"],
-            demos=["SimCSE"],
-            models=["llama4_scout"],
+            source_domains=source_domains,
+            target_domains=target_domains,
+            demos=demos,
+            models=models,
             shot_infos=shot_infos,
-            indices=[0,1,2,3,4]
+            indices=indices
         )
-   
 
     domain_to_eval_data = defaultdict(lambda: {"ground_truth": "", "json_paths": [], "key_info": []})
 
