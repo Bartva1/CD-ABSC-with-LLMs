@@ -1,22 +1,107 @@
 # An-LLM-Based-Approach-for-Cross-Domain-ABSC
 
-Code for the paper `An LLM-Based Approach for Cross-Domain Aspect-Based Sentiment Classifcation'
+This repository contains the code and data for the research paper:
 
-To run the code:
+**"An LLM-Based Approach for Cross-Domain Aspect-Based Sentiment Classification"**
 
-- run raw_data.py for the specified domains to process the XML reviews and create train and test sets
-- run get_data_stats.py for the statistics on the data sets after they have been created by running raw_data.py
-- run classification.py for the ABSC task using LLMs
-- run evaluation.json.py to get the performance metrics for a certain output file
+The study explores how large language models (LLMs) can be used to improve cross-domain ABSC tasks by transforming source domain samples into domain-invariant representations.
+
+---
+## Repository Structure
+```
+📦An-LLM-Based-Approach-for-Cross-Domain-ABSC
+ ┣ 📂books
+ ┃ ┗ 📜book_reviews_2019.xml
+ ┣ 📂data_processing
+ ┃ ┣ 📜data_book_hotel.py
+ ┃ ┣ 📜data_rest_lapt.py
+ ┃ ┣ 📜get_data_stats.py
+ ┃ ┣ 📜load_data.py
+ ┃ ┗ 📜raw_data.py
+ ┣ 📂LLMs
+ ┃ ┣ 📜classification.py
+ ┃ ┣ 📜evaluation_json.py
+ ┃ ┣ 📜transform_data.py
+ ┃ ┗ 📜utilities.py
+ ┣ 📂SemEval2014
+ ┃ ┣ 📜laptop_test_2014.xml
+ ┃ ┣ 📜laptop_train_2014.xml
+ ┃ ┣ 📜restaurant_test_2014.xml
+ ┃ ┗ 📜restaurant_train_2014.xml
+ ┣ 📜LICENSE
+ ┗ 📜README.md
+```
+
+## Requirements
+install required packages:
 
 
-Other files:
+## How to Run
+Open the terminal
 
-- data_book_hotel.py is a helper file used to get the data sets for books
-- data_rest_lapt.py is a helper file used to get the data sets for restaurants and laptops
-- load_data.py is a helper file used to get the data sets
-- kl_divergence.py to calculate kl divergence and correlation with accuracy results
-- preprocess_incontext_outputs.py is used to format the output from reasoning models into the correct format
-- add_metrics_to_json.py can be used to also add the metrics to these files after the format is corrected
-- transform_data.py is used to transform data using LLMs to be domain invariant
+1. Create Train/Test Sets
+``` console
+  python data_processing/raw_data.py
+```
+
+2. View Dataset Statistics (Optional)
+
+ ``` console
+  python data_processing/get_data_stats.py
+```
+ 3. Set up API keys 
+To run the experiments, you need to provide API keys for the LLM services. In this project, these are loaded from a .env file in the project root.
+
+- create a .env file in the root directory (same level as An-LLM-Based-Approach-for-Cross-Domain-ABSC)
+- add the following keys to the file:
+```env
+  OPENAI_KEY=your_openai_key_here
+  GROQ_KEY=your_groq_key_here
+  GEMINI_KEY=your_gemini_key_here
+ ```
+- the client/keys you want to use can be adjusted in LLMs/transformation.py and LLMs/classification.py
+  
+4. Run ABSC experiments with LLMs
+
+``` console
+  python LLMs/classification.py
+```
+5. Get the performance measures
+``` console
+python LLMs/evaluation.py
+```
+
+Optional: run individual experiment by using config file:
+``` console
+python LLMs/classification.py --config configs/config_file.json
+```
+Or only for certain domains/models:
+
+```console
+python classification.py \
+  --source_domains laptop \
+  --target_domains book \
+  --demos SimCSE \
+  --models gemma,llama4_scout \
+  --indices 0,1,4 \
+  --shot_infos_path configs/shot_infos.json
+```
+
+
+
+## Description of Key Files
+
+**data_processing/** (adapted from https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus)
+- raw_data.py: Creates the train and test sets.
+- load_data.py: Helper functions for loading the datasets.
+- get_data_stats.py: Prints statistics for the processed datasets.
+- data_book_hotel.py: Book-specific data creation logic.
+- data_rest_lapt.py: Restaurant and laptop data preparation logic.
+
+**LLMs/**
+- classification.py: Main script for ABSC prediction using LLMs.
+- transform_data.py: Transforms source domain samples using LLMs to improve cross-domain generalization.
+- evaluation_json.py: Evaluates predictions to get performance measures
+- utilities.py: Helper functions + functions for post-processing
+  
 
