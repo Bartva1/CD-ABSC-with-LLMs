@@ -292,7 +292,7 @@ def parse_experiment_args():
     return source_domains, target_domains, demos, models, shot_infos, indices
 
 if __name__ == "__main__":
-    # example usage if the llms misbehave with the output for the transformations
+    # example usage if the llms misbehave with the output for the transformations, only needed when you get errors from output
     domains = ["laptop", "book", "restaurant"]
     for domain in domains:
         with open(f"cache/gemma/dependent/train_data_{domain}.json", "r", encoding="utf-8") as f:
