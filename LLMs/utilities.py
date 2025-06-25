@@ -435,7 +435,8 @@ def parse_experiment_args() ->  tuple[list[str], list[str], list[str], list[str]
 
 def fix_missing_spaces(text: str) -> str:
     """
-    Adds a space between a letter and a digit if not already present.
+    Adds a space between a letter and a digit if not already present,
+    and also between a letter and a comma followed by a digit.
 
     Args:
         text: The input string.
@@ -443,7 +444,10 @@ def fix_missing_spaces(text: str) -> str:
     Returns:
         The string with spaces inserted where needed.
     """
-    return re.sub(r'(?<=[a-zA-Z])(?=\d)', ' ', text)
+    text = re.sub(r'(?<=[a-zA-Z])(?=\d)', ' ', text)
+    text = re.sub(r'(?<=[a-zA-Z])(?=,\d)', ' ', text)
+    text = re.sub(r',(?=\d)', ', ', text)
+    return text
 
 
 
