@@ -24,6 +24,7 @@ def main():
     :return:
     """
     # Domain is one of the following: restaurant (2014), laptop (2014), book (2019)
+    # now all included
     domains = ["restaurant", "laptop", "book"]
     for domain in domains:
         year = 2019 if domain == 'book' else 2014
