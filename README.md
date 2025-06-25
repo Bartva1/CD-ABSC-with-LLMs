@@ -36,28 +36,25 @@ The study explores how large language models (LLMs) can be used to improve cross
 The required libraries can be found in requirements.txt
 
 ## How to Run
-### Optional set-up using conda in VSCode, this is one way to ensure the dependencies between the libraries are correct:
-- Press ctrl + shift + p, to select an interpreter and select conda with python 3.12
-- Ensure the virtual environment is activated
-- Run the following in the terminal (can be opened by ctrl + shift + `)
-``` console
- pip install requirements.txt
- ```
 
-### Executing the code
 Open the terminal.
 
-1. Create Train/Test Sets
+1. Get the required libraries
+``` console
+pip install -r requirements.txt
+```
+
+2. Create Train/Test Sets
 ``` console
 python data_processing/raw_data.py
 ```
 
-2. View Dataset Statistics (Optional)
+3. View Dataset Statistics (Optional)
 
  ``` console
  python data_processing/get_data_stats.py
 ```
- 3. Set up API keys 
+4. Set up API keys 
 To run the experiments, you need to provide API keys for the LLM services. In this project, these are loaded from a .env file in the project root.
 For more information on how to get an API key using groq, go to the bottom of the repository.
 
@@ -70,12 +67,12 @@ GEMINI_KEY=your_gemini_key_here
  ```
 - the client/keys you want to use can be adjusted in LLMs/transformation.py and LLMs/classification.py.
   
-4. Run ABSC experiments with LLMs
+5. Run ABSC experiments with LLMs
 
 ``` console
 python LLMs/classification.py
 ```
-5. Get the performance measures
+6. Get the performance measures
 ``` console
 python LLMs/evaluation_json.py
 ```
