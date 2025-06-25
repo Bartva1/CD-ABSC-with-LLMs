@@ -4,7 +4,7 @@ This repository contains the code and data for the research paper:
 
 **"An LLM-Based Approach for Cross-Domain Aspect-Based Sentiment Classification"**
 
-The study explores how large language models (LLMs) can be used to improve cross-domain ABSC tasks by transforming source domain samples into domain-invariant representations.
+The study explores how large language models (LLMs) can be used to improve cross-domain Aspect-Based Sentiment Classification (ABSC) tasks by transforming source domain samples into domain-invariant representations.
 
 ---
 ## Repository Structure
@@ -33,6 +33,7 @@ The study explores how large language models (LLMs) can be used to improve cross
 ```
 
 ## Requirements
+Here are the used versions of the python libraries:
 ``` console
 torch==2.7.1
 nltk==3.9.1
