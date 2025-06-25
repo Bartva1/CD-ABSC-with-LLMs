@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from dotenv import load_dotenv
 from groq import Groq
-from utilities import get_response, enforce_rate_limit, load_txt_data, load_json_data
+from utilities import get_response, enforce_rate_limit, load_txt_data, load_json_data, fix_missing_spaces, normalize
 
 MAX_REQUESTS_PER_MINUTE = 1000
 REQUEST_WINDOW = 60
@@ -118,29 +118,43 @@ Current aspect: {aspect}
 }
 
 
-def fix_missing_spaces(text):
-    # Add a space between a lowercase letter and a digit, if not already there
-    return re.sub(r'(?<=[a-zA-Z])(?=\d)', ' ', text)
+def is_aspect_in_response(aspect: str, response: str) -> bool:
+    """
+    Checks if the normalized aspect term is present in the normalized response.
 
-def normalize(text):
-    if not isinstance(text, str):
-        return ""
-    text = unicodedata.normalize("NFKC", text).lower().strip()
-    text = re.sub(r"'s\b", "", text)               
-    text = re.sub(r"[\"'`‘’“”]", "", text)         
-    text = re.sub(r"\s+", " ", text)
-    text = fix_missing_spaces(text)
-    return text
+    Args:
+        aspect: The aspect term to check.
+        response: The response string.
 
-
-
-def is_aspect_in_response(aspect, response):
+    Returns:
+        True if aspect is in response, False otherwise.
+    """
     norm_aspect = normalize(aspect)
     norm_response = normalize(response)
     return norm_aspect in norm_response
 
+def get_response_with_correction(
+    prompt: str, 
+    client, 
+    model: str, 
+    aspect: str, 
+    max_retries: int, 
+    i: int
+) -> str:
+    """
+    Gets a model response and, if the aspect is missing, reprompts until it is included or retries are exhausted.
 
-def get_response_with_correction(prompt, client, model, aspect, max_retries, i):
+    Args:
+        prompt: The initial prompt.
+        client: The LLM client.
+        model: The model name.
+        aspect: The required aspect term.
+        max_retries: Maximum number of correction attempts.
+        i: Index of the current sample (for logging).
+
+    Returns:
+        The response string containing the aspect.
+    """
         
     model_map = {
         "gpt-4o": "gpt-4o-mini",
@@ -191,10 +205,25 @@ def get_response_with_correction(prompt, client, model, aspect, max_retries, i):
     
     return response
 
-def build_prompt(domain: str, transformation_type: str, sentence: str, aspect:str) -> str:
-    assert domain in DOMAIN_EXAMPLES, f"Unknown domain: {domain}"
-    assert transformation_type in ["dependent", "independent", "basic"], "transformation_type must be 'dependent', 'independent', or 'basic'"
-    
+def build_prompt(
+    domain: str, 
+    transformation_type: str, 
+    sentence: str, 
+    aspect: str
+) -> str:
+    """
+    Builds a prompt for the LLM based on the domain, transformation type, sentence, and aspect.
+
+    Args:
+        domain: The domain name.
+        transformation_type: The type of transformation ('dependent', 'independent', or 'basic').
+        sentence: The input sentence.
+        aspect: The aspect term.
+
+    Returns:
+        The formatted prompt string.
+    """
+   
     examples = DOMAIN_EXAMPLES[domain][transformation_type]
     formatted_examples = "\n".join(
         f"""Example {i+1}:
@@ -208,11 +237,30 @@ def build_prompt(domain: str, transformation_type: str, sentence: str, aspect:st
     prompt = template.format(domain=domain, examples=formatted_examples, sentence=sentence, aspect=aspect)
     return prompt
 
+def get_transformation(
+    prompt_version: str, 
+    domain: str, 
+    sentence: str, 
+    aspect: str, 
+    client, 
+    model_name: str, 
+    i: int
+) -> str:
+    """
+    Generates a transformed sentence using the LLM and ensures the aspect is present.
 
+    Args:
+        prompt_version: The transformation type.
+        domain: The domain name.
+        sentence: The input sentence.
+        aspect: The aspect term.
+        client: The LLM client.
+        model_name: The model name.
+        i: Index of the current sample (for logging).
 
-
-
-def get_transformation(prompt_version, domain, sentence, aspect, client, model_name, i):
+    Returns:
+        The transformed sentence.
+    """
     prompt = build_prompt(domain, transformation_type=prompt_version, sentence=sentence, aspect=aspect)
 
     try:
@@ -224,7 +272,28 @@ def get_transformation(prompt_version, domain, sentence, aspect, client, model_n
         return ""
 
 
-def transform_and_cache(domain, prompt_version, data, cache_path, model_name, api_key):
+def transform_and_cache(
+    domain: str, 
+    prompt_version: str, 
+    data: list[dict], 
+    cache_path: str, 
+    model_name: str, 
+    api_key: str
+) -> list[dict]:
+    """
+    Transforms and caches paraphrased data using the LLM, skipping already cached results.
+
+    Args:
+        domain: The domain name.
+        prompt_version: The transformation type.
+        data: List of data samples.
+        cache_path: Path to the cache file.
+        model_name: The model name.
+        api_key: API key for the LLM.
+
+    Returns:
+        The list of transformed data samples.
+    """
     if os.path.exists(cache_path):
         with open(cache_path, "r") as f:
             data = json.load(f)
@@ -266,9 +335,12 @@ def transform_and_cache(domain, prompt_version, data, cache_path, model_name, ap
 
 # if you want to transform a seperate path without doing the classification, run the main function in this file
 if __name__ == "__main__":
+    # Load key
     load_dotenv() 
     key_groq = os.getenv("GROQ_KEY")
 
+    # Configure for which model, domains, and transformation type you want to transform
+    # Also possible to transform test data, but this is not used in the main experiments
     model = "llama4_scout"
     train_domains = ["laptop"]
     test_domains = []

@@ -9,17 +9,39 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utilities import load_txt_data, get_directory, get_output_path, generate_info, parse_experiment_args
+from utilities import load_txt_data, get_directory, get_output_path, generate_info, parse_experiment_args, fix_missing_spaces, normalize
 
 LABELS = ["Positive", "Negative", "Neutral"]
 
-
 def load_predictions(path: str) -> list[dict]:
+    """
+    Loads prediction results from a JSON file, handling both dict and string formats.
+
+    If predictions are stored as strings, attempts to parse them as JSON. If parsing fails,
+    tries to fix simple malformed JSON strings using a regex that matches a single key-value pair
+    in the format: {"key": value}. This helps recover from outputs where the JSON is not properly formatted.
+
+    Regex explanation:
+        ^\s*\{\s*"(.+?)"\s*:\s*(.+)\s*\}\s*$
+        - ^\s*         : Start of string, optional whitespace
+        - \{           : Literal opening brace
+        - \s*"(.+?)"   : Key in double quotes, possibly surrounded by whitespace (captured group 1)
+        - \s*:\s*      : Colon separator, possibly surrounded by whitespace
+        - (.+)         : Value (captured group 2)
+        - \s*\}        : Closing brace, possibly surrounded by whitespace
+        - \s*$         : Optional whitespace, end of string
+
+    Args:
+        path: Path to the JSON file.
+
+    Returns:
+        List of prediction dictionaries.
+    """
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     preds = data.get("results", [])
-  
+
     if all(isinstance(x, dict) for x in preds):
         return preds
 
@@ -29,7 +51,8 @@ def load_predictions(path: str) -> list[dict]:
             try:
                 out.append(json.loads(s))
             except json.JSONDecodeError:
-                # need to still explain this
+                # Try to fix simple faulty JSON strings using regex:
+                # This matches a string like '{"key": value}' and extracts key and value.
                 m = re.match(r'^\s*\{\s*"(.+?)"\s*:\s*(.+)\s*\}\s*$', s)
                 if m:
                     key, val = m.groups()
@@ -44,21 +67,18 @@ def load_predictions(path: str) -> list[dict]:
         return out
     raise ValueError("Unknown prediction format in 'results'")
 
-def fix_missing_spaces(text):
-    # Add a space between a lowercase letter and a digit, if not already there
-    return re.sub(r'(?<=[a-zA-Z])(?=\d)', ' ', text)
 
-def normalize(text):
-    if not isinstance(text, str):
-        return ""
-    text = unicodedata.normalize("NFKC", text).lower().strip()
-    text = re.sub(r"'s\b", "", text)   
-    text = re.sub(r"[\"'`‘’“”]", "", text)
-    text = re.sub(r"\s+", " ", text)
-    text = fix_missing_spaces(text)
-    return text
+def compute_performance_metrics(y_true: list, y_pred: list) -> dict:
+    """
+    Computes accuracy, macro F1, macro precision, macro recall, and per-class accuracy.
 
-def compute_performance_metrics(y_true, y_pred):
+    Args:
+        y_true: List of true labels.
+        y_pred: List of predicted labels.
+
+    Returns:
+        Dictionary with overall and per-class metrics.
+    """
     metrics = {
         "accuracy": accuracy_score(y_true, y_pred) * 100,
         "macro_f1": f1_score(y_true, y_pred, average="macro", labels=LABELS, zero_division=0) * 100,
@@ -81,7 +101,15 @@ def compute_performance_metrics(y_true, y_pred):
     return metrics
 
 
-def plot_confusion_heatmap(base_df, model_cols):
+def plot_confusion_heatmap(base_df: pd.DataFrame, model_cols: list[str]) -> None:
+    """
+    Plots a confusion matrix heatmap for majority-wrong predictions.
+
+    Args:
+        base_df: DataFrame with true and predicted labels.
+        model_cols: List of model prediction columns.
+    """
+
     base_df["num_wrong"] = base_df.apply(
         lambda row: sum(row[col] != row["true_label"] for col in model_cols), axis=1
     )
@@ -108,10 +136,20 @@ def plot_confusion_heatmap(base_df, model_cols):
     plt.title("Confusion Matrix (One Representative Error per Misclassified Sample)")
     plt.show()
 
-
-
     
-def evaluate_multiple_predictions(txt_path, json_paths, key_info):
+def evaluate_multiple_predictions(txt_path: str, json_paths: list[str], key_info: list[tuple]) -> tuple[pd.DataFrame, dict]:
+    """
+    Evaluates multiple prediction files against ground truth and computes metrics.
+
+    Args:
+        txt_path: Path to the ground-truth .txt file.
+        json_paths: List of prediction JSON file paths.
+        key_info: List of tuples with (model, train_domain, demo_method, transformation_text).
+
+    Returns:
+        Tuple of (DataFrame with predictions, dict of model metrics).
+    """
+
     test_data = load_txt_data(txt_path)
 
     base_df = pd.DataFrame({
@@ -180,7 +218,13 @@ def evaluate_multiple_predictions(txt_path, json_paths, key_info):
     return base_df, model_metrics
 
 
-def print_metric_tables(all_metrics):
+def print_metric_tables(all_metrics: dict):
+    """
+    Prints formatted tables of metrics for all evaluated models.
+
+    Args:
+        all_metrics: Nested dictionary of metrics for each (source, test_domain) and model_id.
+    """
     metric_names = ["accuracy", "macro_f1", "macro_precision", "macro_recall"]
     header_fmt = "{:<50}" + "".join(["{:>15}" for _ in metric_names])
     row_fmt = "{:<50}" + "".join(["{:>15.2f}" for _ in metric_names])
@@ -230,9 +274,8 @@ def print_metric_tables(all_metrics):
 
 
 if __name__ == "__main__":
-    
+    # Parse experiment arguments and generate evaluation info
     source_domains, target_domains, demos, models, shot_infos, indices = parse_experiment_args()
-    
     test_info = generate_info(
             source_domains=source_domains,
             target_domains=target_domains,
@@ -242,14 +285,18 @@ if __name__ == "__main__":
             indices=indices
         )
 
+    # Dictionary containing the ground truth, paths to predictions, and info to distiniguish the models. The first key is the test_domain
     domain_to_eval_data = defaultdict(lambda: {"ground_truth": "", "json_paths": [], "key_info": []})
 
+    # Looping over experiments
     for train_domain, test_domain, demo_method, model, shot_info in test_info:
+        # Creating paths for the ground truth and predictions
         year = 2019 if test_domain == "book" else 2014
         path_ground_truth = f"data_out/{test_domain}/raw_data_{test_domain}_test_{year}.txt"
         subdir = get_directory(demo=demo_method, model=model, shot_info=shot_info)
         path_pred = get_output_path(source_domain=train_domain, target_domain=test_domain, num_shots=shot_info['num_shots'], subdir=subdir)
 
+        # Adding information structured based on test/target domain
         domain_to_eval_data[test_domain]["ground_truth"] = path_ground_truth
         domain_to_eval_data[test_domain]["json_paths"].append(path_pred)
         domain_to_eval_data[test_domain]["key_info"].append(

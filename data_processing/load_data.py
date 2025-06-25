@@ -1,3 +1,10 @@
+# Method for creating the data sets
+#
+# Adapted from: 
+# https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus
+
+
+
 from torch.utils.data import DataLoader
 import torch
 from torch.utils.data import Dataset, DataLoader

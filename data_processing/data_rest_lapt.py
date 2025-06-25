@@ -1,5 +1,7 @@
 # Data reader for restaurant and laptop data.
 #
+# https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus
+#
 # https://github.com/jorisknoester/DAT-LCR-Rot-hop-PLUS-PLUS
 #
 # Adapted from Trusca, Wassenberg, Frasincar and Dekker (2020).

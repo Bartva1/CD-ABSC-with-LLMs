@@ -3,8 +3,8 @@ import pprint
 
 if __name__ == "__main__":
 
+    # Parse experiment arguments and generate prediction/evaluation info
     source_domains, target_domains, demos, models, shot_infos, indices = parse_experiment_args()
-    
     test_info = generate_info(
         source_domains=source_domains,
         target_domains=target_domains,

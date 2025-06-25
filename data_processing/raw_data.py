@@ -1,5 +1,7 @@
 # Method for preparing raw data for the restaurant, laptop, book and hotel datasets.
 #
+# https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus
+#
 # https://github.com/jorisknoester/DAT-LCR-Rot-hop-PLUS-PLUS
 #
 # Adapted from van Berkum, van Megen, Savelkoul, and Weterman (2021).
