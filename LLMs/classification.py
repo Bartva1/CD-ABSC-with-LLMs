@@ -506,7 +506,7 @@ def main():
             
         # Explanation for the current run
         shot_explanation = "" if shot_info["num_shots"] == 0 else f"shots from sources: {', '.join(shot_info['sources'])}"
-        print(f"\nRunning {demo_method} with {shot_explanation} ({shot_info['num_shots']}) on {train_domain}→{test_domain}, model: {model_choice}")  
+        print(f"\nRunning {demo_method} with {shot_explanation} shots ({shot_info['num_shots']}) on {train_domain}→{test_domain}, model: {model_choice}")  
 
         # Output path
         subdir = get_directory(demo=demo_method, model=model_choice, shot_info=shot_info)
