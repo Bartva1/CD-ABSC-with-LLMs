@@ -33,10 +33,34 @@ The study explores how large language models (LLMs) can be used to improve cross
 ```
 
 ## Requirements
-Install required packages:
+``` console
+torch==2.7.1
+nltk==3.9.1
+numpy==1.26.4
+pandas==2.0.3
+scikit-learn==1.3.2
+python-dotenv==1.1.1
+openai==1.91.0
+groq==0.28.0
+google-generativeai==0.8.5
+rank-bm25==0.2.2
+tqdm==4.66.4
+transformers==4.41.2
+matplotlib==3.8.4
+seaborn==0.13.2
 
+```
 
 ## How to Run
+# Optional set-up using conda in VSCode, this is one way to ensure the dependencies between the libraries are correct:
+- Press ctrl + shift + p, to select an interpreter and select conda with python 3.12
+- Ensure the virtual environment is activated
+- Run the following in the terminal (can be opened by ctrl + shift + `)
+``` console
+ pip install torch==2.7.1 nltk==3.9.1 numpy==1.26.4 pandas==2.0.3 scikit-learn==1.3.2 python-dotenv==1.1.1 openai==1.91.0 groq==0.28.0 google-generativeai==0.8.5 rank-bm25==0.2.2 tqdm==4.66.4 transformers==4.41.2 matplotlib==3.8.4 seaborn==0.13.2
+ ```
+
+# Executing the code
 Open the terminal.
 
 1. Create Train/Test Sets
@@ -69,23 +93,23 @@ For more information on how to get an API key using groq, go to the bottom of th
 ```
 5. Get the performance measures
 ``` console
-python LLMs/evaluation.py
+python LLMs/evaluation_json.py
 ```
 
 Optional: run individual experiment by using config file, currently config_file.json runs all experiments.
 ``` console
 python LLMs/classification.py --config configs/config_file.json
 ```
-Or only for certain domains/models, the example below runs code for the laptop-book source-target pair, using SimCSE for the demonstrations, predictions are created by both models, and for the demonstration configuration, they use the 6-shot raw source domain, 6-shot Hybrid (Aspect-Preserved Domain-Independent + raw source domain), and 0-shot. 
+Or only for certain domains/models: 
+The example below runs code for 
+- Source domain: laptop (not used)
+- Target domain: laptop
+- Demonstration strategy: SimCSE (not used)
+- Models: Llama4-Scout-17B-16E-Instruct
+- Shot info: 0-shot
 
 ```console
-python classification.py \
-  --source_domains laptop \
-  --target_domains book \
-  --demos SimCSE \
-  --models gemma,llama4_scout \
-  --indices 0,1,4 \
-  --shot_infos_path configs/shot_infos.json
+python LLMs/evaluation_json.py --config configs/config_file.json --source_domains laptop --target_domains laptop --demos SimCSE --models llama4_scout --indices 4 --shot_infos_path configs/shot_infos.json
 ```
 
 
