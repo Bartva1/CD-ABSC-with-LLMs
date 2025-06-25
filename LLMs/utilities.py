@@ -8,6 +8,7 @@ This module is intended for functions that are used in multiple scripts or are g
 """
 
 
+
 import os
 import time
 import json
@@ -16,6 +17,7 @@ import re
 import google.generativeai as genai
 import argparse
 import sys
+import unicodedata
 
 from typing import Deque
 

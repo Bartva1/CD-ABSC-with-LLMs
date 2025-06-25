@@ -14,7 +14,7 @@ from utilities import load_txt_data, get_directory, get_output_path, generate_in
 LABELS = ["Positive", "Negative", "Neutral"]
 
 def load_predictions(path: str) -> list[dict]:
-    """
+    r"""
     Loads prediction results from a JSON file, handling both dict and string formats.
 
     If predictions are stored as strings, attempts to parse them as JSON. If parsing fails,
@@ -51,20 +51,21 @@ def load_predictions(path: str) -> list[dict]:
             try:
                 out.append(json.loads(s))
             except json.JSONDecodeError:
+                # print(f"[DEBUG] wrong prediction for prediction: {s}")
+
                 # Try to fix simple faulty JSON strings using regex:
-                # This matches a string like '{"key": value}' and extracts key and value.
-                m = re.match(r'^\s*\{\s*"(.+?)"\s*:\s*(.+)\s*\}\s*$', s)
+                # This matches a string like {key: value} or {"key": value} or {key: "value"}
+                m = re.match(r'^\s*\{\s*(.+?)\s*:\s*(.+?)\s*\}\s*$', s)
                 if m:
                     key, val = m.groups()
-                    key_fixed = key.replace('"', '\\"')
-                    fixed = f'{{"{key_fixed}":{val}}}'
-                    try:
-                        out.append(json.loads(fixed))
-                        continue
-                    except json.JSONDecodeError:
-                        pass
+                    # Remove any remaining quotes and whitespace
+                    key = key.strip().replace('"', '')
+                    val = val.strip().replace('"', '')
+                    out.append({key: val})
+                    # print(f"[DEBUG] Regex matched for prediction: key={key!r}, val={val!r}")
+                    continue
                 out.append({})
-        return out
+    return out
     raise ValueError("Unknown prediction format in 'results'")
 
 
@@ -173,6 +174,8 @@ def evaluate_multiple_predictions(txt_path: str, json_paths: list[str], key_info
             {normalize(key): value.capitalize() for key, value in pred.items()}
             for pred in predictions
         ]
+
+        
 
         for i, (sample, prediction) in enumerate(zip(test_data, normalized_predictions)):
             aspect = normalize(sample["aspect"])
