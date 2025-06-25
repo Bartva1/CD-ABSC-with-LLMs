@@ -65,13 +65,13 @@ Open the terminal.
 
 1. Create Train/Test Sets
 ``` console
-  python data_processing/raw_data.py
+python data_processing/raw_data.py
 ```
 
 2. View Dataset Statistics (Optional)
 
  ``` console
-  python data_processing/get_data_stats.py
+ python data_processing/get_data_stats.py
 ```
  3. Set up API keys 
 To run the experiments, you need to provide API keys for the LLM services. In this project, these are loaded from a .env file in the project root.
@@ -80,16 +80,16 @@ For more information on how to get an API key using groq, go to the bottom of th
 - create a .env file in the root directory (same level as An-LLM-Based-Approach-for-Cross-Domain-ABSC).
 - add the following keys to the file:
 ```env
-  OPENAI_KEY=your_openai_key_here
-  GROQ_KEY=your_groq_key_here
-  GEMINI_KEY=your_gemini_key_here
+OPENAI_KEY=your_openai_key_here
+GROQ_KEY=your_groq_key_here
+GEMINI_KEY=your_gemini_key_here
  ```
 - the client/keys you want to use can be adjusted in LLMs/transformation.py and LLMs/classification.py.
   
 4. Run ABSC experiments with LLMs
 
 ``` console
-  python LLMs/classification.py
+python LLMs/classification.py
 ```
 5. Get the performance measures
 ``` console
