@@ -33,24 +33,7 @@ The study explores how large language models (LLMs) can be used to improve cross
 ```
 
 ## Requirements
-Here are the used versions of the python libraries:
-``` console
-torch==2.7.1
-nltk==3.9.1
-numpy==1.26.4
-pandas==2.0.3
-scikit-learn==1.3.2
-python-dotenv==1.1.1
-openai==1.91.0
-groq==0.28.0
-google-generativeai==0.8.5
-rank-bm25==0.2.2
-tqdm==4.66.4
-transformers==4.41.2
-matplotlib==3.8.4
-seaborn==0.13.2
-
-```
+The required libraries can be found in requirements.txt
 
 ## How to Run
 ### Optional set-up using conda in VSCode, this is one way to ensure the dependencies between the libraries are correct:
@@ -58,7 +41,7 @@ seaborn==0.13.2
 - Ensure the virtual environment is activated
 - Run the following in the terminal (can be opened by ctrl + shift + `)
 ``` console
- pip install torch==2.7.1 nltk==3.9.1 numpy==1.26.4 pandas==2.0.3 scikit-learn==1.3.2 python-dotenv==1.1.1 openai==1.91.0 groq==0.28.0 google-generativeai==0.8.5 rank-bm25==0.2.2 tqdm==4.66.4 transformers==4.41.2 matplotlib==3.8.4 seaborn==0.13.2
+ pip install requirements.txt
  ```
 
 ### Executing the code
