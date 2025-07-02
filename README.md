@@ -23,6 +23,12 @@ The study explores how large language models (LLMs) can be used to improve cross
  ┃ ┣ 📜evaluation_json.py
  ┃ ┣ 📜transform_data.py
  ┃ ┗ 📜utilities.py
+ ┣ 📂 Replication
+ ┃ ┣ 📂dawm
+ ┃ ┣ 📂lcr
+ ┃ ┣ 📜config.py
+ ┃ ┣ 📜load_data.py
+ ┃ ┗ 📜save_data.py
  ┣ 📂SemEval2014
  ┃ ┣ 📜laptop_test_2014.xml
  ┃ ┣ 📜laptop_train_2014.xml
@@ -111,6 +117,13 @@ python LLMs/evaluation_json.py --config configs/config_file.json --source_domain
 - utilities.py: Helper functions + functions for post-processing.
 - preview_test_info.py: Prints out all the different combinations used in the experiments, more info on the structure of these configurations can be found in the script itself.
 
+## How to Run Replication Code
+In this study we also replicate the study: "Domain-Adaptive Aspect-Based Sentiment Classification Using Masked Domain-Specific Words and Target Position-Aware Attention". All the files are adapted from: https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus. Here are the steps to follow to get the results from the benchmark models, which are the LCR-Rot-hop++ model and DAWM-Rot-hop++ model.
+1. Follow the instruction to run the main code, to get the folder data_out.
+2. Open the folder called "Replication", and copy the data_out folder into this folder.
+3. Run save_data.py to create BERT embeddings which are used
+4. Run lcr/lcr_rot_train.py to get the results for the LCR-Rot-hop++ model
+5. Run dawm/bertmasker_lcr_train_cross.py to get the results for the DAWM-LCR-Rot-hop++
 
 ## Getting an API key from groq
 1. Go to https://groq.com.
