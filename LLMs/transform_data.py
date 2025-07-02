@@ -223,16 +223,19 @@ def build_prompt(
     Returns:
         The formatted prompt string.
     """
-   
-    examples = DOMAIN_EXAMPLES[domain][transformation_type]
-    formatted_examples = "\n".join(
-        f"""Example {i+1}:
-        Original: {orig}
-        Aspect: {aspect}
-        Polarity: {polarity}
-        Output: {out}""" for i, (orig, out, aspect, polarity) in enumerate(examples)
-            )
     
+    if transformation_type == 'basic':
+        formatted_examples = ""
+    else:
+        examples = DOMAIN_EXAMPLES[domain][transformation_type]
+        formatted_examples = "\n".join(
+            f"""Example {i+1}:
+            Original: {orig}
+            Aspect: {aspect}
+            Polarity: {polarity}
+            Output: {out}""" for i, (orig, out, aspect, polarity) in enumerate(examples)
+                )
+        
     template = PROMPT_TEMPLATES[transformation_type]
     prompt = template.format(domain=domain, examples=formatted_examples, sentence=sentence, aspect=aspect)
     return prompt
@@ -265,7 +268,7 @@ def get_transformation(
 
     try:
         enforce_rate_limit(request_times=request_times, MAX_REQUESTS_PER_MINUTE=MAX_REQUESTS_PER_MINUTE, REQUEST_WINDOW=REQUEST_WINDOW)
-        response = get_response_with_correction(prompt, client, model_name, aspect, 0, i)
+        response = get_response_with_correction(prompt, client, model_name, aspect, 1, i)
         return response.strip()
     except Exception as e:
         print(f" \n [Error] Paraphrasing failed: {e}")
@@ -320,10 +323,10 @@ def transform_and_cache(
             aspect = sample["aspect"]
             sample["paraphrased_text"]= get_transformation(prompt_version, domain, sentence, aspect, client, model_name, i)
 
-            # if not is_aspect_in_response(aspect, sample['paraphrased_text']):
-            #     paraphrased_sentence = sample["paraphrased_text"]
-            #     print(f"Sentence at index {i} is invalid, the aspect was: {aspect} and the paraphrased sentence was: {paraphrased_sentence}] \n Falling back to the original sentence: {sample['text']}")
-            #     sample["paraphrased_text"] = sample['text']
+            if not is_aspect_in_response(aspect, sample['paraphrased_text']):
+                paraphrased_sentence = sample["paraphrased_text"]
+                print(f"Sentence at index {i} is invalid, the aspect was: {aspect} and the paraphrased sentence was: {paraphrased_sentence}] \n Falling back to the original sentence: {sample['text']}")
+                sample["paraphrased_text"] = sample['text']
                         
             with open(cache_path, "w") as f:
                     json.dump(data, f, indent=2)
