@@ -43,7 +43,7 @@ The required libraries can be found in requirements.txt
 
 ## How to Run
 
-Open the terminal.
+To get the main results, follow these steps in a terminal.
 
 1. Get the required libraries
 ``` console
