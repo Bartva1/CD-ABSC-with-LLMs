@@ -55,7 +55,7 @@ pip install -r requirements.txt
 python data_processing/raw_data.py
 ```
 
-3. View Dataset Statistics (Optional)
+3. (Optional) View Dataset Statistics 
 
  ``` console
  python data_processing/get_data_stats.py
@@ -83,11 +83,11 @@ python LLMs/classification.py
 python LLMs/evaluation_json.py
 ```
 
-Optional: run individual experiment by using config file, currently config_file.json runs all experiments.
+7. (Optional) Run individual experiment by using config file, currently config_file.json runs all experiments.
 ``` console
 python LLMs/classification.py --config configs/config_file.json
 ```
-Or only for certain domains/models: 
+8. (Optional) Run experiments for certain domains/models
 The example below runs code for 
 - Source domain: laptop (not used)
 - Target domain: laptop
