@@ -89,14 +89,12 @@ python LLMs/classification.py --config configs/config_file.json
 ```
 8. (Optional) Run experiments for certain domains/models
 The example below runs code for 
-- Source domain: laptop (not used)
 - Target domain: laptop
-- Demonstration strategy: SimCSE (not used)
-- Models: Llama4-Scout-17B-16E-Instruct
+- Model: Llama4-Scout-17B-16E-Instruct
 - Shot info: 0-shot
 
 ```console
-python LLMs/evaluation_json.py --config configs/config_file.json --source_domains laptop --target_domains laptop --demos SimCSE --models llama4_scout --indices 4 --shot_infos_path configs/shot_infos.json
+python LLMs/classification.py --config configs/config_file.json --target_domains laptop  --models llama4_scout --indices 4 
 ```
 
 
