@@ -1,4 +1,4 @@
-# Improving-Cross-Domain-ABSC-with-LLMs-and-Domain-Invariant-Transformations
+# CD-ABSC-with-LLMs
 
 This repository contains the code and data for the research paper:
 
@@ -9,7 +9,7 @@ The study explores how large language models (LLMs) can be used to improve cross
 ---
 ## Repository Structure
 ```
-📦Improving-Cross-Domain-ABSC-with-LLMs-and-Domain-Invariant-Transformations
+📦CD-ABSC-with-LLMs
  ┣ 📂books
  ┃ ┗ 📜book_reviews_2019.xml
  ┣ 📂data_processing
@@ -64,7 +64,7 @@ python data_processing/raw_data.py
 To run the experiments, you need to provide API keys for the LLM services. In this project, these are loaded from a .env file in the project root.
 For more information on how to get an API key using groq, go to the bottom of the repository.
 
-- create a .env file in the root directory (same level as Improving-Cross-Domain-ABSC-with-LLMs-and-Domain-Invariant-Transformations).
+- create a .env file in the root directory (same level as CD-ABSC-with-LLMs).
 - add the following keys to the file:
 ```env
 OPENAI_KEY=your_openai_key_here
