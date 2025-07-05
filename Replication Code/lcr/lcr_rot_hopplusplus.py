@@ -1,3 +1,11 @@
+"""
+This file is adapted from:
+"Domain-Adaptive Aspect-Based Sentiment Classification Using Masked Domain-Specific Words and Target Position-Aware Attention"
+by Finn van der Knaap (https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus).
+
+Implements the LCR Rot-hop++ model for aspect-based sentiment classification.
+"""
+
 import torch
 from torch import nn
 from typing import Optional
@@ -231,4 +239,3 @@ class LCRRotHopPlusPlus(nn.Module):
             return output
         
         return output
-    

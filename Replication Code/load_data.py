@@ -1,3 +1,11 @@
+"""
+This file is adapted from:
+"Domain-Adaptive Aspect-Based Sentiment Classification Using Masked Domain-Specific Words and Target Position-Aware Attention"
+by Finn van der Knaap (https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus).
+
+Provides data loading, splitting, and preprocessing utilities for DAWM/LCR models.
+"""
+
 from torch.utils.data import DataLoader
 import torch
 from transformers import BertTokenizer, BertModel
@@ -333,4 +341,3 @@ def get_contexts(token_embeddings,target_ind,pad_embedding,segment_ids):
     
     
     #sl = torch.cat(sl,dim=0)
-    

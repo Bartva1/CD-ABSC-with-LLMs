@@ -1,3 +1,11 @@
+"""
+This file is adapted from:
+"Domain-Adaptive Aspect-Based Sentiment Classification Using Masked Domain-Specific Words and Target Position-Aware Attention"
+by Finn van der Knaap (https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus).
+
+Handles training and final predictions for the LCR Rot-hop++ model, including data loading and model instantiation.
+"""
+
 import torch
 from load_data import CustomDataset
 from torch.utils.data import DataLoader
@@ -205,4 +213,3 @@ if __name__ == '__main__':
             # print("Neutral:", neutral)
             # print("Positive:", positive)
 
-    

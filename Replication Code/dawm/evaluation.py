@@ -1,3 +1,11 @@
+"""
+This file is adapted from:
+"Domain-Adaptive Aspect-Based Sentiment Classification Using Masked Domain-Specific Words and Target Position-Aware Attention"
+by Finn van der Knaap (https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus).
+
+Provides evaluation utilities for DAWM models, including accuracy, precision, recall, and F1 metrics.
+"""
+
 from sklearn.metrics import precision_score,recall_score,f1_score,accuracy_score
 
 def get_measures(y_test,y_pred,samplewise = 'per'):

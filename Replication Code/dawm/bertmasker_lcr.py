@@ -1,3 +1,11 @@
+"""
+This file is adapted from:
+"Domain-Adaptive Aspect-Based Sentiment Classification Using Masked Domain-Specific Words and Target Position-Aware Attention"
+by Finn van der Knaap (https://github.com/FvdKnaap/DAWM-LCR-Rot-hop-plus-plus).
+
+Implements the BERTMasker and related modules for DAWM experiments.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -312,4 +320,4 @@ class BERTMasker_plus(nn.Module):
         sentiment_pred = self.sentiment_classifier(total_lcr)
     
         return shared_output,private_output,sentiment_pred,mask_perc,input_e
-        
+
