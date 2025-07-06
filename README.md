@@ -71,7 +71,7 @@ OPENAI_KEY=your_openai_key_here
 GROQ_KEY=your_groq_key_here
 GEMINI_KEY=your_gemini_key_here
  ```
-- the client/keys you want to use can be adjusted in LLMs/transformation.py and LLMs/classification.py.
+- the client/keys you want to use can be adjusted in LLMs/transformation.py and LLMs/classification.py. Groq was used for both models in this study, and is used in the current configuration.
   
 5. Run ABSC experiments with LLMs
 
